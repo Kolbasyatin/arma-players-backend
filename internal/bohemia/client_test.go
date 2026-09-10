@@ -160,6 +160,7 @@ func TestClient_errors(t *testing.T) {
 		{"unauthorized", 401, `{}`, bohemia.KindAuthError},
 		{"forbidden", 403, `{}`, bohemia.KindAuthError},
 		{"server error", 500, `oops`, bohemia.KindHTTPError},
+		{"bad request with reason", 400, `{"error":"InvalidInput","message":"roomId"}`, bohemia.KindHTTPError},
 		{"invalid json", 200, `{not json`, bohemia.KindInvalidJSON},
 	}
 
@@ -218,6 +219,9 @@ func assertKind(t *testing.T, err error, want bohemia.ErrorKind) {
 	}
 	if be.Kind != want {
 		t.Errorf("kind: want %s, got %s", want, be.Kind)
+	}
+	if be.HTTPStatus >= 400 && be.Body == "" && be.Kind != bohemia.KindInvalidJSON {
+		t.Errorf("HTTP error must keep response body for diagnostics: %+v", be)
 	}
 }
 

@@ -149,7 +149,8 @@ func (c *Client) postJSON(ctx context.Context, op, path string, reqBody any, out
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, classifyStatus(op, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return nil, classifyStatus(op, resp.StatusCode, body)
 	}
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))

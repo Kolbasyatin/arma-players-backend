@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 )
 
@@ -27,12 +28,16 @@ type Error struct {
 	Kind       ErrorKind
 	Op         string // "listPlayers", "searchRooms"
 	HTTPStatus int    // 0, если ответ не получен
+	Body       string // начало тела ответа при HTTP-ошибке: Bohemia пишет туда код причины
 	Err        error  // исходная ошибка, может быть nil
 }
 
 func (e *Error) Error() string {
-	if e.Err != nil {
+	switch {
+	case e.Err != nil:
 		return fmt.Sprintf("bohemia %s: %s: %v", e.Op, e.Kind, e.Err)
+	case e.Body != "":
+		return fmt.Sprintf("bohemia %s: %s (http %d): %s", e.Op, e.Kind, e.HTTPStatus, e.Body)
 	}
 	return fmt.Sprintf("bohemia %s: %s (http %d)", e.Op, e.Kind, e.HTTPStatus)
 }
@@ -63,10 +68,18 @@ func classifyTransport(op string, err error) *Error {
 	return &Error{Kind: kind, Op: op, Err: err}
 }
 
-func classifyStatus(op string, status int) *Error {
+func classifyStatus(op string, status int, body []byte) *Error {
 	kind := KindHTTPError
 	if status == 401 || status == 403 {
 		kind = KindAuthError
 	}
-	return &Error{Kind: kind, Op: op, HTTPStatus: status}
+	return &Error{Kind: kind, Op: op, HTTPStatus: status, Body: truncate(body, 512)}
+}
+
+// truncate — первые n байт тела как строка, без переводов строк.
+func truncate(b []byte, n int) string {
+	if len(b) > n {
+		b = b[:n]
+	}
+	return strings.TrimSpace(strings.ReplaceAll(string(b), "\n", " "))
 }
