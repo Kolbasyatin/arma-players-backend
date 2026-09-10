@@ -1,6 +1,7 @@
 package bohemia
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -20,6 +21,7 @@ const (
 	KindAuthError         ErrorKind = "AUTH_ERROR"
 	KindHTTPError         ErrorKind = "HTTP_ERROR"
 	KindInvalidJSON       ErrorKind = "INVALID_JSON"
+	KindRoomNotFound      ErrorKind = "ROOM_NOT_FOUND" // 404 apiCode=MpRoomNotFound: roomId устарел или комнаты нет
 	KindInternal          ErrorKind = "INTERNAL_ERROR"
 )
 
@@ -70,8 +72,13 @@ func classifyTransport(op string, err error) *Error {
 
 func classifyStatus(op string, status int, body []byte) *Error {
 	kind := KindHTTPError
-	if status == 401 || status == 403 {
+	switch {
+	case status == 401 || status == 403:
 		kind = KindAuthError
+	case status == 404 && bytes.Contains(body, []byte(`"MpRoomNotFound"`)):
+		// Проверено на живом API 2026-09-11: несуществующий/устаревший roomId → 404 с этим apiCode,
+		// а не пустой список. Значит рестарт сервера нельзя спутать с массовым выходом игроков.
+		kind = KindRoomNotFound
 	}
 	return &Error{Kind: kind, Op: op, HTTPStatus: status, Body: truncate(body, 512)}
 }

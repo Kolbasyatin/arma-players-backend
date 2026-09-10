@@ -76,6 +76,8 @@ func StatusFromError(err error) (Status, int) {
 			return StatusHTTPError, be.HTTPStatus
 		case bohemia.KindInvalidJSON:
 			return StatusInvalidJSON, be.HTTPStatus
+		case bohemia.KindRoomNotFound:
+			return StatusRoomNotFound, be.HTTPStatus
 		}
 		return StatusInternalError, be.HTTPStatus
 	}

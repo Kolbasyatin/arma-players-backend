@@ -161,6 +161,8 @@ func TestClient_errors(t *testing.T) {
 		{"forbidden", 403, `{}`, bohemia.KindAuthError},
 		{"server error", 500, `oops`, bohemia.KindHTTPError},
 		{"bad request with reason", 400, `{"error":"InvalidInput","message":"roomId"}`, bohemia.KindHTTPError},
+		{"room not found", 404, `{"code":404,"apiCode":"MpRoomNotFound","message":"There is no room x"}`, bohemia.KindRoomNotFound},
+		{"other 404", 404, `not found`, bohemia.KindHTTPError},
 		{"invalid json", 200, `{not json`, bohemia.KindInvalidJSON},
 	}
 
