@@ -1,0 +1,21 @@
+# Локальная инфраструктура разработки. Порт 5433, потому что 5432 на этой машине занят другим проектом.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: armaplayers-postgres
+    environment:
+      POSTGRES_USER: armaplayers
+      POSTGRES_PASSWORD: armaplayers
+      POSTGRES_DB: armaplayers
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U armaplayers -d armaplayers"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

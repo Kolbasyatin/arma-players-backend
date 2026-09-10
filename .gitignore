@@ -1,2 +1,5 @@
 .idea
 .env
+
+# прод-секреты
+deploy/.env

@@ -43,7 +43,7 @@ erDiagram
     server_identity_key {
         bigint id PK
         bigint server_id FK
-        text key_type "HOST_ADDRESS | ROOM_ID | SESSION_ID | DIRECT_JOIN_CODE | DEDICATED_SERVER_ID | PROVIDER_ID"
+        text key_type "HOST_ADDRESS | ROOM_ID | SESSION_ID (история, не identity)"
         text key_value
         timestamptz first_seen_at
         timestamptz last_seen_at
@@ -122,4 +122,6 @@ flowchart TD
 
 - Подтвердить экспериментом, что `roomId` меняется при перерегистрации (снять до/после рестарта известного сервера). Наблюдение 2026-09-10: roomId тестового сервера не менялся минимум 7 дней.
 - Есть ли в payload `rooms/search` стабильный id хоста (dedicated server id / provider id).
-- Стабильность `sessionId` (`directJoinCode` нестабилен — подтверждено).
+- ~~Стабильность `sessionId`~~ — **снято 2026-09-10**: sessionId не уникален (один у 22 комнат, другой у 2 разных серверов), как identity key не годится. Возможно, ключ уровня хоста — отдельная гипотеза.
+- `directJoinCode` нестабилен — подтверждено 2026-09-10.
+- На сегодня единственный подтверждённо пригодный ключ — `hostAddress` (присутствует у 100% комнат).

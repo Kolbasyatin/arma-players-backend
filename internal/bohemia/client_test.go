@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -130,6 +131,9 @@ func TestClient_SearchRooms(t *testing.T) {
 	if room.RuntimeStats == nil || room.RuntimeStats.FPS != 59 {
 		t.Errorf("runtimeStats: %+v", room.RuntimeStats)
 	}
+	if len(room.Mods) != 3 || room.Mods[0].ModID == "" || room.Mods[0].Name == "" {
+		t.Errorf("mods: %+v", room.Mods)
+	}
 	if room.SessionID != "c134568a-000051ffebe3" || room.DetailsUpdatedAt != 1789050821 || !room.BattlEye || len(room.SupportedGameClientTypes) != 3 {
 		t.Errorf("room details: %+v", room)
 	}
@@ -214,5 +218,46 @@ func assertKind(t *testing.T, err error, want bohemia.ErrorKind) {
 	}
 	if be.Kind != want {
 		t.Errorf("kind: want %s, got %s", want, be.Kind)
+	}
+}
+
+func TestClient_SearchAllRooms(t *testing.T) {
+	// 7 комнат, страница 3 → ожидаем страницы 3,3,1 и запросы from=0,3,6.
+	const total, pageSize = 7, 3
+	var froms []int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			From  int `json:"from"`
+			Limit int `json:"limit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		froms = append(froms, body.From)
+
+		rooms := make([]map[string]any, 0, body.Limit)
+		for i := body.From; i < total && i < body.From+body.Limit; i++ {
+			rooms = append(rooms, map[string]any{"id": fmt.Sprintf("room-%d", i), "hostAddress": fmt.Sprintf("10.0.0.%d:2001", i)})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"rooms": rooms, "searchFrom": body.From, "totalCount": total})
+	}))
+	defer srv.Close()
+
+	var got []string
+	err := newClient(srv).SearchAllRooms(context.Background(), "t", pageSize, func(page bohemia.SearchRoomsResponse) error {
+		for _, r := range page.Rooms {
+			got = append(got, r.ID)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != total || got[0] != "room-0" || got[6] != "room-6" {
+		t.Errorf("rooms: %v", got)
+	}
+	if fmt.Sprint(froms) != "[0 3 6]" {
+		t.Errorf("froms: %v", froms)
 	}
 }

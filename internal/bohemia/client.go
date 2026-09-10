@@ -161,3 +161,27 @@ func (c *Client) postJSON(ctx context.Context, op, path string, reqBody any, out
 	}
 	return raw, nil
 }
+
+// SearchAllRooms обходит всё лобби страницами по pageSize и отдаёт каждую страницу в visit.
+// Останавливается, когда страница пришла короче pageSize или пустой, либо visit вернул ошибку.
+// totalCount между страницами плавает (серверы приходят и уходят), поэтому на него не полагаемся.
+func (c *Client) SearchAllRooms(ctx context.Context, accessToken string, pageSize int, visit func(page SearchRoomsResponse) error) error {
+	if pageSize <= 0 {
+		pageSize = 500 // проверено на живом API 2026-09-10: принимается, ~3.7 MiB на страницу
+	}
+	for from := 0; ; from += pageSize {
+		page, err := c.SearchRooms(ctx, accessToken, RoomSearch{From: from, Limit: pageSize, Lightweight: true})
+		if err != nil {
+			return err
+		}
+		if len(page.Rooms) == 0 {
+			return nil
+		}
+		if err := visit(page); err != nil {
+			return err
+		}
+		if len(page.Rooms) < pageSize {
+			return nil
+		}
+	}
+}

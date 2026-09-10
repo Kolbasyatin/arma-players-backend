@@ -26,7 +26,9 @@
       "supportedGameClientTypes": ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"],
       "runtimeStats": {"memory": 1673978, "fps": 59},
       "joinQueue": {"type": "REGULAR", "maxSize": 50, "size": 7, "positionAvgWaitTime": 60},
-      "mods": [],
+      "mods": [{"modId": "5F0D245931200FD1", "name": "Railway Generator", "version": "1.0.5"}, {"modId": "5DE612963E4B005A", "name": "Rail Enfusion Redux", "version": "1.0.12"}, {"modId": "629EDC37CDE3AD35", "name": "Belleau Wood", "version": "2.3.39"}],
+      "hostedScenarioModId": "64E09AEAE531939F",
+      "lastJoinedAt": 1788535173,
       "someFutureField": {"nested": true}
     }
   ],

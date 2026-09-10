@@ -1,0 +1,7 @@
+.git
+.idea
+.env
+.env.*
+deploy/.env
+docs
+*.md

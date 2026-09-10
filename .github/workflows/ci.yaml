@@ -1,0 +1,71 @@
+# CI: тесты (юнит + интеграционные против Postgres) на каждый push/PR;
+# образ в GHCR — при push в main и по тегам v*. Теги образа: latest, sha, версия.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: armaplayers
+          POSTGRES_PASSWORD: armaplayers
+          POSTGRES_DB: armaplayers_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U armaplayers -d armaplayers_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l ./cmd ./internal)" || { gofmt -l ./cmd ./internal; exit 1; }
+      - run: go vet ./...
+      - name: go test
+        env:
+          DATABASE_URL_TEST: postgres://armaplayers:armaplayers@localhost:5432/armaplayers_test?sslmode=disable
+        run: go test -race -count=1 ./...
+
+  image:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=semver,pattern={{version}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

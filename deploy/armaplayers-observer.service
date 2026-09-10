@@ -1,0 +1,31 @@
+# systemd-юнит стека armaplayers (Postgres + observer) через docker compose.
+# systemd отвечает за старт при загрузке, stop и обновление; перезапуск контейнеров после
+# аварии — политики restart в compose.yaml (systemd за отдельными контейнерами не следит).
+#
+# Установка (репозиторий или каталог deploy/ лежит в /opt/teamspeakbot/arma-players):
+#   sudo cp deploy/armaplayers-observer.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now armaplayers-observer
+#
+# Обновление до свежего образа: sudo systemctl restart armaplayers-observer  (pull делается на старте)
+# Логи:                        docker logs -f armaplayers-observer
+# Состояние наблюдения:        curl -s localhost:8081/observation-status | jq
+
+[Unit]
+Description=Arma Reforger player observer stack (armaplayers)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/teamspeakbot/arma-players
+ExecStartPre=/usr/bin/docker compose -f deploy/compose.yaml --env-file deploy/.env pull --quiet
+ExecStart=/usr/bin/docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --remove-orphans
+# down останавливает observer по SIGTERM (штатное завершение) и Postgres; данные в volume сохраняются.
+ExecStop=/usr/bin/docker compose -f deploy/compose.yaml --env-file deploy/.env down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

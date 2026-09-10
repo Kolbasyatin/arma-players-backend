@@ -13,5 +13,6 @@
 | [0005](0005-observation-pipeline-and-presence.md) | Observation → Diff → Derived events; семантика неудачного poll | Accepted |
 | [0006](0006-player-identity-and-aliases.md) | Идентичность игрока: bohemia_user_id, platform, alias | Accepted |
 | [0007](0007-domain-events-and-outbox.md) | In-process события + outbox для watchlist | Proposed |
+| [0008](0008-tracking-selection.md) | Выбор серверов для минутного опроса: MANUAL + AUTO по онлайну | Accepted |
 
 Обязательный контекст для всех ADR — [`AGENTS.md`](../../AGENTS.md).

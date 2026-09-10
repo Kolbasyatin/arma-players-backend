@@ -47,7 +47,8 @@
 - ✅ Тесты: `TestXxx`, `Benchmark/Fuzz/Example`, нет аннотаций; `t.Run`, `t.Cleanup`, `t.Helper`, `TestMain`; `-run` regex. ✅ Табличные тесты = dataProvider без аннотаций; `%T`; `-v`, `-run`.
 
 ## База данных
-- ⬜ `COMMENT ON TABLE/COLUMN` в миграциях — обязательное требование проекта.
+- ✅ `COMMENT ON TABLE/COLUMN` в миграциях — обязательное требование, проверяется интеграционным тестом.
+- ✅ Теория: `database/sql` (≈PDO) vs `pgx` напрямую; `pgxpool` один на процесс; `Exec` / `QueryRow().Scan` / `Query`+`rows.Next`; `$1` параметры; NULL ↔ указатели; `Begin`/`defer Rollback`/`Commit`; `pgx.Batch`; ctx отменяет запрос на сервере; рукописный SQL vs `sqlc` vs ORM; миграции goose+embed; тесты против настоящего Postgres.
 
 ## Типы и память
 - ✅ Struct = непрерывная память с padding по выравниванию; порядок полей влияет на размер.
@@ -100,4 +101,47 @@
 - Слайсы отдельно (см. раздел «Данные и сериализация»).
 - Переименовать `internal/app/wire.go`? (`deps.go` / `build.go`).
 - Живой запуск `go run ./cmd/probe -host 37.48.253.41:2001` после поднятия arma-reforger-hz.
-- Далее: PostgreSQL в docker compose, goose-миграции с COMMENT ON, таблицы `servers`, `poll_run`.
+- ✅ Сделано: Postgres в compose, миграции, каталог, планировщик.
+- Далее: tracking (минутный опрос listPlayers), затем игроки/сессии; отдельно — деплой на удалённую машину (Dockerfile, compose).
+
+## Из кода storage / observer (2026-09-10) — на что посмотреть
+- ⬜ `//go:embed *.sql` + `embed.FS` — файлы вшиваются в бинарник на компиляции; директива над `var`.
+- ⬜ `goose`: формат `-- +goose Up / Down`, таблица `goose_db_version`, идемпотентность.
+- ⬜ `pgxpool.Pool` — пул соединений; `stdlib.OpenDBFromPool` — мост pgx → `database/sql` для goose.
+- ⬜ `pool.QueryRow(ctx, sql).Scan(&x)` — чтение одной строки; плейсхолдеры `$1` (в следующем шаге).
+- ⬜ Интеграционный тест с `t.Skip` по отсутствию `DATABASE_URL`.
+- ⬜ `log/slog`: `SetDefault`, JSON-handler, пары ключ-значение `slog.Info("msg", "k", v)`.
+- ⬜ `bigint GENERATED ALWAYS AS IDENTITY`, `timestamptz`, partial index `WHERE tracking_enabled` (SQL, не Go).
+
+## Из кода catalog / observation / CatalogRepo (2026-09-10) — на что посмотреть
+- ⬜ Callback-пагинация `visit func(page) error` — обработка потока страниц без накопления 35 МБ в памяти.
+- ⬜ Интерфейсы `Source`, `TokenProvider`, `Repository` объявлены в `catalog` (потребитель), фейки в тесте — три интерфейса, ноль моков-библиотек.
+- ⬜ `var _ catalog.Repository = (*CatalogRepo)(nil)` — проверка реализации интерфейса на этапе компиляции.
+- ⬜ Транзакция pgx: `Begin` / `defer tx.Rollback(ctx)` / `Commit` — Rollback после Commit безвреден.
+- ⬜ `errors.Is(err, pgx.ErrNoRows)` — «не найдено» как sentinel, не ошибка.
+- ⬜ `pgx.Batch` — несколько запросов одним round-trip.
+- ⬜ `*int`, `*time.Time` как nullable для SQL; `unixOrNil`; `&q.Size` — адрес поля структуры.
+- ⬜ `for i := range rooms { room := &rooms[i] }` — указатель на элемент слайса вместо копии.
+- ⬜ Типизированные константы `PollType`, `Status` в `observation`; `string(run.Status)` при передаче в SQL.
+- ⬜ `ON CONFLICT ... DO UPDATE SET x = EXCLUDED.x` — upsert (SQL).
+- ⬜ Интеграционные тесты делят dev-БД и оставляют строки (AUTH_ERROR в poll_run — из теста). TODO: отдельная `DATABASE_URL_TEST`.
+
+## Из кода планировщика (2026-09-10, cmd/observer, catalog/loop.go) — на что посмотреть
+- ⬜ `go func() {...}()` — запуск горутины; `errgroup.WithContext` — группа горутин, первая ошибка отменяет ctx остальным, `g.Wait()`.
+- ⬜ `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)` — Ctrl+C / `docker stop` превращаются в отмену контекста.
+- ⬜ `select { case <-timer.C: ... case <-ctx.Done(): ... }` — ожидание первого из двух событий; почему `time.Sleep` не годится.
+- ⬜ Каналы: `<-ch` чтение, `chan error` с буфером 1 в тесте, `ctx.Done()` тоже канал.
+- ⬜ Цикл, который возвращается только по `ctx.Err()`; проверка `ctx.Err() != nil` после операции, чтобы отличить отмену от ошибки.
+- ⬜ Гонка в собственном тесте (`fakeRepo.saved`) — поймана `-race`, лечится мьютексом в фейке. Урок: любые данные, которые трогают две горутины, нужно защищать.
+- ⬜ `errors.Is(err, context.Canceled)` — штатная остановка не ошибка.
+
+## Из кода MVP-коллектора (2026-09-10, presence / tracking / httpapi / deploy) — на что посмотреть, когда будет время
+- ⬜ `presence`: машина состояний как чистая функция над `Tx`-интерфейсом; `sessionOps` — маленький интерфейс, чтобы один алгоритм обслуживал присутствие и очередь.
+- ⬜ In-memory фейк `memStore`, реализующий сразу `Store` и `Tx` — тесты бизнес-логики без Postgres.
+- ⬜ `errgroup.SetLimit(n)` — ограничение параллелизма вместо ручного семафора; `g.Go` в цикле `for _, srv := range` (Go ≥1.22: переменная цикла своя на итерацию).
+- ⬜ `FOR UPDATE` в выборке открытых сессий — блокировка строк в транзакции.
+- ⬜ `RETURNING id, (xmax = 0)` — отличить INSERT от UPDATE в upsert (Postgres-трюк).
+- ⬜ `time.NewTicker` в `RunLoop` трекера vs таймер в цикле скана.
+- ⬜ `http.ServeMux` с методом в паттерне `"GET /health"`; таймауты `http.Server`; `Shutdown` по ctx.
+- ⬜ `LEFT JOIN LATERAL` для «последний poll на сервер» в статусе (SQL).
+- ⬜ Dockerfile: multi-stage, `CGO_ENABLED=0`, distroless, `--mount=type=cache`.
