@@ -8,9 +8,10 @@ services:
     container_name: armaplayers-postgres
     restart: unless-stopped
     logging:
-      driver: journald
+      driver: json-file
       options:
-        tag: "{{.Name}}"
+        max-size: "20m"
+        max-file: "3"
     environment:
       POSTGRES_USER: armaplayers
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задай POSTGRES_PASSWORD в deploy/.env}
@@ -30,12 +31,17 @@ services:
     image: ghcr.io/kolbasyatin/arma-players-backend:${OBSERVER_TAG:-latest}
     container_name: armaplayers-observer
     restart: on-failure
-    # Логи в journald: переживают пересоздание контейнера при обновлении, ротация — настройками journald.
-    # Читать: journalctl CONTAINER_NAME=armaplayers-observer -f   (или -o cat для чистого JSON)
+    # Логи: stdout (docker logs, ограничен по размеру) + файл logs/observer.log (в корне каталога проекта) с ротацией —
+    # лежит рядом с приложением и переживает пересоздание контейнера. Читать: tail -f logs/observer.log | jq
     logging:
-      driver: journald
+      driver: json-file
       options:
-        tag: "{{.Name}}"
+        max-size: "20m"
+        max-file: "3"
+    volumes:
+      - ../logs:/logs
+    # uid/gid владельца каталога logs на хосте; образ distroless, пользователь внутри не нужен.
+    user: "${RUN_UID:-1000}:${RUN_GID:-1000}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +59,10 @@ services:
       RAW_RETENTION: ${RAW_RETENTION:-336h}
       PRESENCE_ABSENT_CONFIRMATIONS: ${PRESENCE_ABSENT_CONFIRMATIONS:-2}
       PRESENCE_MAX_GAP: ${PRESENCE_MAX_GAP:-15m}
+      LOG_FILE: /logs/observer.log
+      LOG_MAX_SIZE_MB: ${LOG_MAX_SIZE_MB:-50}
+      LOG_MAX_BACKUPS: ${LOG_MAX_BACKUPS:-10}
+      LOG_MAX_AGE_DAYS: ${LOG_MAX_AGE_DAYS:-30}
     ports:
       - "127.0.0.1:8081:8081"
     extra_hosts:

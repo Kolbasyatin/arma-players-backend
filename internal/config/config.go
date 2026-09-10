@@ -40,6 +40,12 @@ type Config struct {
 	RawRetention      time.Duration `env:"RAW_RETENTION" envDefault:"336h"`
 	RetentionInterval time.Duration `env:"RETENTION_INTERVAL" envDefault:"1h"`
 
+	// Логи: JSON в stdout всегда; LOG_FILE добавляет файл с ротацией (размер в МБ, число копий, дни).
+	LogFile       string `env:"LOG_FILE"`
+	LogMaxSizeMB  int    `env:"LOG_MAX_SIZE_MB" envDefault:"50"`
+	LogMaxBackups int    `env:"LOG_MAX_BACKUPS" envDefault:"10"`
+	LogMaxAgeDays int    `env:"LOG_MAX_AGE_DAYS" envDefault:"30"`
+
 	Bohemia Bohemia `envPrefix:"BOHEMIA_"`
 }
 

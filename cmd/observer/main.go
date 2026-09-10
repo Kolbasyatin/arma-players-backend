@@ -18,6 +18,7 @@ import (
 	"armaplayers/internal/app"
 	"armaplayers/internal/config"
 	"armaplayers/internal/httpapi"
+	"armaplayers/internal/logging"
 	"armaplayers/internal/storage/postgres"
 )
 
@@ -29,12 +30,14 @@ func main() {
 }
 
 func run() error {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	closeLog := logging.Setup(logging.FileConfig{
+		Path: cfg.LogFile, MaxSizeMB: cfg.LogMaxSizeMB, MaxBackups: cfg.LogMaxBackups, MaxAgeDays: cfg.LogMaxAgeDays,
+	})
+	defer closeLog()
 	if cfg.DatabaseURL == "" {
 		return errors.New("config: DATABASE_URL is required")
 	}

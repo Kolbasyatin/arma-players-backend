@@ -33,9 +33,10 @@ sudo systemctl daemon-reload && sudo systemctl enable --now armaplayers-observer
 # обновление до свежего образа
 sudo systemctl restart armaplayers-observer
 curl -s localhost:8081/observation-status | jq
-journalctl CONTAINER_NAME=armaplayers-observer -f
+tail -f logs/observer.log | jq -c .
 ```
 
+Логи — `logs/observer.log` рядом с приложением (JSON, ротация по размеру и сроку), плюс `docker logs`.
 Данные Postgres — в docker volume `armaplayers_postgres-data`; бэкап: `docker exec armaplayers-postgres pg_dump -U armaplayers armaplayers | gzip > backup.sql.gz`.
 
 Секреты живут только в `deploy/.env` (в `.gitignore`). Откат — `OBSERVER_TAG=sha-<commit>` в `.env` и `up -d`.
