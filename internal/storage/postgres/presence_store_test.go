@@ -53,7 +53,7 @@ func TestPresenceStore_endToEnd(t *testing.T) {
 	}
 
 	var players, aliases, platforms, openSessions, closedLeft, events int
-	var aliceNick string
+	var aliceNick, aliceSessionNick string
 	pool.QueryRow(ctx, `SELECT count(*) FROM player_identity`).Scan(&players)
 	pool.QueryRow(ctx, `SELECT count(*) FROM player_alias`).Scan(&aliases)
 	pool.QueryRow(ctx, `SELECT count(*) FROM player_platform_identity WHERE game_client_type = 'PLATFORM_PSN'`).Scan(&platforms)
@@ -61,6 +61,10 @@ func TestPresenceStore_endToEnd(t *testing.T) {
 	pool.QueryRow(ctx, `SELECT count(*) FROM player_server_session WHERE status = 'CLOSED_LEFT' AND ended_at = $1`, t0.Add(time.Minute)).Scan(&closedLeft)
 	pool.QueryRow(ctx, `SELECT count(*) FROM domain_event`).Scan(&events)
 	pool.QueryRow(ctx, `SELECT current_nickname FROM player_identity WHERE bohemia_user_id = $1`, alice.UserID).Scan(&aliceNick)
+	pool.QueryRow(ctx, `SELECT s.nickname FROM player_server_session s JOIN player_identity p ON p.id = s.player_id WHERE p.bohemia_user_id = $1`, alice.UserID).Scan(&aliceSessionNick)
+	if aliceSessionNick != "Alicia" {
+		t.Errorf("session nickname: want Alicia, got %q", aliceSessionNick)
+	}
 
 	if players != 2 || aliases != 3 || platforms != 1 || openSessions != 1 || closedLeft != 1 || aliceNick != "Alicia" {
 		t.Errorf("state: players=%d aliases=%d psn=%d open=%d closedLeft=%d aliceNick=%q", players, aliases, platforms, openSessions, closedLeft, aliceNick)

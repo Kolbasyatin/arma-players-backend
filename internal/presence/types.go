@@ -52,6 +52,7 @@ type Session struct {
 	Status             SessionStatus
 	AbsentPolls        int
 	StartupReplay      bool
+	Nickname           string      // ник в этом визите; обновляется каждым poll, пока игрок присутствует
 	QueueResult        QueueResult // только для очереди
 }
 

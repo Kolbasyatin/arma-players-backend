@@ -111,7 +111,7 @@ func (t *presenceTx) LastSuccessfulListPlayersAt(ctx context.Context, serverID i
 	return at, true, nil
 }
 
-const sessionColumns = `id, player_id, server_id, first_seen_at, last_seen_at, first_known_absent_at, ended_at, status, absent_polls`
+const sessionColumns = `id, player_id, server_id, first_seen_at, last_seen_at, first_known_absent_at, ended_at, status, absent_polls, nickname`
 
 func scanSessions(rows pgx.Rows, withResult bool) ([]presence.Session, error) {
 	defer rows.Close()
@@ -120,7 +120,7 @@ func scanSessions(rows pgx.Rows, withResult bool) ([]presence.Session, error) {
 		var s presence.Session
 		var status string
 		var result *string
-		dest := []any{&s.ID, &s.PlayerID, &s.ServerID, &s.FirstSeenAt, &s.LastSeenAt, &s.FirstKnownAbsentAt, &s.EndedAt, &status, &s.AbsentPolls}
+		dest := []any{&s.ID, &s.PlayerID, &s.ServerID, &s.FirstSeenAt, &s.LastSeenAt, &s.FirstKnownAbsentAt, &s.EndedAt, &status, &s.AbsentPolls, &s.Nickname}
 		if withResult {
 			dest = append(dest, &result)
 		}
@@ -147,9 +147,9 @@ func (t *presenceTx) OpenPresenceSessions(ctx context.Context, serverID int64) (
 func (t *presenceTx) InsertPresenceSession(ctx context.Context, s presence.Session) (int64, error) {
 	var id int64
 	err := t.tx.QueryRow(ctx, `
-		INSERT INTO player_server_session (player_id, server_id, first_seen_at, last_seen_at, status, startup_replay)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		s.PlayerID, s.ServerID, s.FirstSeenAt, s.LastSeenAt, string(s.Status), s.StartupReplay).Scan(&id)
+		INSERT INTO player_server_session (player_id, server_id, first_seen_at, last_seen_at, status, startup_replay, nickname)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		s.PlayerID, s.ServerID, s.FirstSeenAt, s.LastSeenAt, string(s.Status), s.StartupReplay, s.Nickname).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert presence session: %w", err)
 	}
@@ -159,8 +159,8 @@ func (t *presenceTx) InsertPresenceSession(ctx context.Context, s presence.Sessi
 func (t *presenceTx) UpdatePresenceSession(ctx context.Context, s presence.Session) error {
 	_, err := t.tx.Exec(ctx, `
 		UPDATE player_server_session
-		SET last_seen_at = $2, first_known_absent_at = $3, ended_at = $4, status = $5, absent_polls = $6, updated_at = now()
-		WHERE id = $1`, s.ID, s.LastSeenAt, s.FirstKnownAbsentAt, s.EndedAt, string(s.Status), s.AbsentPolls)
+		SET last_seen_at = $2, first_known_absent_at = $3, ended_at = $4, status = $5, absent_polls = $6, nickname = $7, updated_at = now()
+		WHERE id = $1`, s.ID, s.LastSeenAt, s.FirstKnownAbsentAt, s.EndedAt, string(s.Status), s.AbsentPolls, s.Nickname)
 	if err != nil {
 		return fmt.Errorf("update presence session %d: %w", s.ID, err)
 	}
@@ -178,9 +178,9 @@ func (t *presenceTx) OpenQueueSessions(ctx context.Context, serverID int64) ([]p
 func (t *presenceTx) InsertQueueSession(ctx context.Context, s presence.Session) (int64, error) {
 	var id int64
 	err := t.tx.QueryRow(ctx, `
-		INSERT INTO player_queue_session (player_id, server_id, first_seen_at, last_seen_at, status)
-		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		s.PlayerID, s.ServerID, s.FirstSeenAt, s.LastSeenAt, string(s.Status)).Scan(&id)
+		INSERT INTO player_queue_session (player_id, server_id, first_seen_at, last_seen_at, status, nickname)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		s.PlayerID, s.ServerID, s.FirstSeenAt, s.LastSeenAt, string(s.Status), s.Nickname).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert queue session: %w", err)
 	}
@@ -195,8 +195,8 @@ func (t *presenceTx) UpdateQueueSession(ctx context.Context, s presence.Session)
 	}
 	_, err := t.tx.Exec(ctx, `
 		UPDATE player_queue_session
-		SET last_seen_at = $2, first_known_absent_at = $3, ended_at = $4, status = $5, absent_polls = $6, result = $7, updated_at = now()
-		WHERE id = $1`, s.ID, s.LastSeenAt, s.FirstKnownAbsentAt, s.EndedAt, string(s.Status), s.AbsentPolls, result)
+		SET last_seen_at = $2, first_known_absent_at = $3, ended_at = $4, status = $5, absent_polls = $6, result = $7, nickname = $8, updated_at = now()
+		WHERE id = $1`, s.ID, s.LastSeenAt, s.FirstKnownAbsentAt, s.EndedAt, string(s.Status), s.AbsentPolls, result, s.Nickname)
 	if err != nil {
 		return fmt.Errorf("update queue session %d: %w", s.ID, err)
 	}

@@ -80,6 +80,7 @@ func (s *Service) apply(ctx context.Context, tx Tx, obs Observation) (Result, er
 
 	connectedIDs := playerIDs(obs.Connected, refs)
 	queueIDs := playerIDs(obs.Queue, refs)
+	nicknames := nicknamesByPlayer(obs, refs)
 	res.Players, res.Queued = len(connectedIDs), len(queueIDs)
 
 	// Присутствие.
@@ -87,7 +88,7 @@ func (s *Service) apply(ctx context.Context, tx Tx, obs Observation) (Result, er
 	if err != nil {
 		return res, fmt.Errorf("presence: open sessions: %w", err)
 	}
-	stats, err := s.reconcile(ctx, tx, obs, res.AfterDataGap, open, connectedIDs, presenceOps{})
+	stats, err := s.reconcile(ctx, tx, obs, res.AfterDataGap, open, connectedIDs, nicknames, presenceOps{})
 	if err != nil {
 		return res, err
 	}
@@ -98,7 +99,7 @@ func (s *Service) apply(ctx context.Context, tx Tx, obs Observation) (Result, er
 	if err != nil {
 		return res, fmt.Errorf("presence: open queue sessions: %w", err)
 	}
-	qstats, err := s.reconcile(ctx, tx, obs, res.AfterDataGap, openQ, queueIDs, queueOps{connected: connectedIDs})
+	qstats, err := s.reconcile(ctx, tx, obs, res.AfterDataGap, openQ, queueIDs, nicknames, queueOps{connected: connectedIDs})
 	if err != nil {
 		return res, err
 	}
@@ -119,6 +120,19 @@ func playerIDs(players []bohemia.Player, refs map[string]PlayerRef) map[int64]st
 	return ids
 }
 
+// nicknamesByPlayer — текущий ник каждого игрока из наблюдения по внутреннему id.
+func nicknamesByPlayer(obs Observation, refs map[string]PlayerRef) map[int64]string {
+	out := make(map[int64]string, len(refs))
+	for _, list := range [][]bohemia.Player{obs.Connected, obs.Queue} {
+		for _, p := range list {
+			if ref, ok := refs[p.UserID]; ok {
+				out[ref.PlayerID] = p.Username
+			}
+		}
+	}
+	return out
+}
+
 type reconcileStats struct{ opened, suspected, closedLeft, closedGap int }
 
 // sessionOps — чем присутствие отличается от очереди: куда писать и какие события порождать.
@@ -132,7 +146,7 @@ type sessionOps interface {
 }
 
 // reconcile — машина состояний ADR 0005 для одного вида сессий.
-func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGap bool, open []Session, present map[int64]struct{}, ops sessionOps) (reconcileStats, error) {
+func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGap bool, open []Session, present map[int64]struct{}, nicknames map[int64]string, ops sessionOps) (reconcileStats, error) {
 	var st reconcileStats
 	now := obs.ObservedAt
 	seen := make(map[int64]bool, len(open))
@@ -157,6 +171,7 @@ func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGa
 
 		if _, here := present[sess.PlayerID]; here {
 			sess.Status, sess.LastSeenAt, sess.AbsentPolls, sess.FirstKnownAbsentAt = StatusOnline, now, 0, nil
+			sess.Nickname = nicknames[sess.PlayerID]
 			if err := ops.update(ctx, tx, sess); err != nil {
 				return st, err
 			}
@@ -200,7 +215,7 @@ func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGa
 		}
 		sess := Session{
 			PlayerID: playerID, ServerID: obs.ServerID, FirstSeenAt: now, LastSeenAt: now,
-			Status: StatusOnline, StartupReplay: obs.StartupReplay,
+			Status: StatusOnline, StartupReplay: obs.StartupReplay, Nickname: nicknames[playerID],
 		}
 		id, err := ops.insert(ctx, tx, sess)
 		if err != nil {

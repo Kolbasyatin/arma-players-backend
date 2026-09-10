@@ -222,6 +222,9 @@ func TestApply_nicknameChange(t *testing.T) {
 	if len(ev) != 1 || ev[0].Payload["old"] != "Alice" || ev[0].Payload["new"] != "Alicia" {
 		t.Errorf("nickname event: %+v", ev)
 	}
+	if m.presence[0].Nickname != "Alicia" {
+		t.Errorf("session nickname must follow the player: %+v", m.presence[0])
+	}
 }
 
 func TestApply_queueThenJoin(t *testing.T) {
