@@ -1,0 +1,35 @@
+{
+  "rooms": [
+    {
+      "id": "34008e3e-9a0c-4be0-b94f-c7f3cb547626",
+      "scenarioId": "{ECC61978EDCC2B5A}Missions/23_Campaign.conf",
+      "name": "[RU] #1 | ARMA-RUSSIAN.RU",
+      "scenarioName": "#AR-Campaign_ScenarioName_Everon",
+      "gameVersion": "1.8.0.13",
+      "hostAddress": "37.48.253.41:2001",
+      "playerCountLimit": 128,
+      "playerCount": 128,
+      "directJoinCode": "0956251811",
+      "updated": 1788463724,
+      "detailsUpdatedAt": 1789050821,
+      "favorite": false,
+      "flags": 1,
+      "hostType": "CommunityDs",
+      "official": false,
+      "joinable": true,
+      "visible": true,
+      "passwordProtected": false,
+      "battlEye": true,
+      "platformName": "Windows",
+      "pingSiteId": "frankfurt",
+      "sessionId": "c134568a-000051ffebe3",
+      "supportedGameClientTypes": ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"],
+      "runtimeStats": {"memory": 1673978, "fps": 59},
+      "joinQueue": {"type": "REGULAR", "maxSize": 50, "size": 7, "positionAvgWaitTime": 60},
+      "mods": [],
+      "someFutureField": {"nested": true}
+    }
+  ],
+  "searchFrom": 0,
+  "totalCount": 1
+}

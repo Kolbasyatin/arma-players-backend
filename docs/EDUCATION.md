@@ -27,13 +27,15 @@
 - ✅ Отладчик GoLand/Delve: `{тип | значение}`, `&x` = адрес переменной, не данных; синтаксис `*(*"T")(addr)`. ✅ Map: `map[K]V`, ссылочный (указатель на хеш-таблицу), порядок случайный, zero value читается, `nil` map — panic на запись, `v, ok :=` форма, `make`/`delete`. ⬜ `time.Time`/`time.Duration`.
 
 ## Системный уровень (не Go, но нужно для понимания)
+- ✅ Функция = байты инструкций в `.text` по фиксированному адресу; `CALL` (сохранить адрес возврата + jump), `RET`; метод = функция со скрытым первым аргументом receiver; одна копия кода на программу; function value = адрес кода (+ receiver).
+- ✅ Мьютекс блокирует только тех, кто зовёт `Lock`, а не структуру/метод — защита на дисциплине.
 - ✅ Файловый дескриптор = индекс в таблице открытых файлов процесса; сокет/файл/pipe — единый интерфейс read/write/close; `/proc/<pid>/fd`.
 - ✅ Все компилируемые языки → один машинный код, ELF, SP, syscalls; Go добавляет runtime (GC, планировщик, дескрипторы); PHP/JS/Java — интерпретатор/VM.
 - ✅ TCP-буфер ядра, `read` возвращает «сколько есть»; цепочка ядро → fd → `net.TCPConn` → HTTP body → `Decoder`.
 
 ## Архитектура в Go
 - 🟡 Интерфейсы объявляет потребитель — принцип объяснён; ⬜ применить на репозиториях в домене.
-- 🟡 `context.Context`: отмена + дедлайн по дереву вызовов, первый параметр, не хранить в структурах. ⬜ практика с shutdown и горутинами.
+- ✅ `context.Context` ≈ AbortController: `Background`, `WithTimeout` → `(ctx, cancel)`, `defer cancel()`, общий бюджет времени; отмена кооперативная — проверяет тот, кто хочет. ⬜ практика с shutdown и горутинами.
 - ⬜ `errgroup` и lifecycle нескольких фоновых циклов.
 - ✅ `error` = встроенный интерфейс `Error() string`; свой тип ошибки; `Unwrap()` для цепочки; `errors.Is` (сентинел) vs `errors.As` (по типу, `&ptr`); `%w`. ✅ sentinel-ошибки — экспортированные переменные пакета (`context.DeadlineExceeded`); `var x *T` как мишень для `errors.As`.
 - ✅ `errors.As` смотрит на тип мишени, не значение; анонимный интерфейс `interface{ Unwrap() error }`; doc-комментарии = документация (`go doc`, pkg.go.dev), исходники всегда доступны.
@@ -67,3 +69,35 @@
 - ✅ Naming: аббревиатуры `URL/HTTP/ID`; `gofmt` как единственный стандарт форматирования.
 - ✅ Конфиг: 12-factor env, `godotenv` в `config.Load`, `.env`/`.env.example`; порядок приоритета Load.
 - ✅ `type Name Underlying`: именованные типы, зачем (методы, различимость `ServerID`/`PlayerID`), явное приведение. 🟡 enum через typed const. ⬜ `iota`.
+
+## Из кода SearchRooms (2026-09-09) — на что посмотреть
+- ⬜ `postJSON(..., reqBody any, out any)` — общий helper вместо дублирования; `any` как параметр, указатель в `out`.
+- ⬜ `io.ReadAll(io.LimitReader(...))` — композиция Reader'ов, лимит на тело.
+- ⬜ `json.RawMessage` — отложенный разбор поля неизвестной формы.
+- ⬜ `*JoinQueue` (указатель на вложенную структуру): `nil` = поля не было в JSON.
+- ⬜ `[]int{}` vs `nil` слайс → `[]` vs `null` в JSON.
+- ⬜ `const op = "..."` внутри функции; `8 << 20` как 8 MiB.
+- ⬜ Тесты: helper с `t.Helper()`, `t.Cleanup`, возврат нескольких значений (`gotPath *string`), `map[string]any` и `float64` для чисел из JSON, type assertion `.([]any)`.
+- ⬜ Канал `chan struct{}` + `close()` как сигнал (тест таймаута); почему `<-r.Context().Done()` не сработал.
+- ⬜ `%+v` на структуре в ошибках теста.
+
+## Из кода token / config / probe (2026-09-09) — на что посмотреть
+- ✅ `sync.Mutex`: замок Lock/Unlock, критическая секция, `defer Unlock`, поле `mu` над защищаемыми полями; data race показан детектором `go test -race` (тест `TestProvider_concurrentGet`). 🟡 `go func(){}()`, `sync.WaitGroup` — использованы в тесте, горутины подробно на планировщике.
+- ✅ `now func() time.Time` — тип функции `func(params) results`, function value без скобок; аналог C-указателя на функцию, плюс замыкания; подмена часов в тестах.
+- ✅ `Source` интерфейс: понято как «фабрика в зачатке» в `app.NewTokenProvider` + фейк в тестах; правило «интерфейс при второй реализации, фейк считается».
+- ⬜ `atomic.Int32` в тесте — счётчик, безопасный между горутинами.
+- ⬜ `var ErrNotAvailable = errors.New(...)` — свой sentinel; `errors.Is` на него.
+- ⬜ Doc-комментарий пакета `// Package token ...` над `package`.
+- ⬜ `envPrefix:"BOHEMIA_"` — вложенная структура конфига.
+- ✅ `flag` пакет: `flag.String` → `*string`, `flag.Parse`, `-h` бесплатно; нет подкоманд.
+- 🟡 Схема `main` → `run() error` → один `os.Exit`; `fmt.Fprintln(os.Stderr, ...)`.
+- ✅ Функция с параметром `f(x T)` ≠ метод `(x T) f()`; методы только на типах своего пакета.
+- ✅ Короткие имена пропорциональны области видимости — конвенция Go, пользователь принял.
+- ⬜ `time.Unix(sec, 0).UTC().Format(time.RFC3339)`; `time.Time` разбирается из JSON сам (RFC 3339).
+- ⬜ `%-40s` — выравнивание в Printf; `for i, r := range slice`, `for _, p := range`.
+
+## На завтра (2026-09-10)
+- Слайсы отдельно (см. раздел «Данные и сериализация»).
+- Переименовать `internal/app/wire.go`? (`deps.go` / `build.go`).
+- Живой запуск `go run ./cmd/probe -host 37.48.253.41:2001` после поднятия arma-reforger-hz.
+- Далее: PostgreSQL в docker compose, goose-миграции с COMMENT ON, таблицы `servers`, `poll_run`.

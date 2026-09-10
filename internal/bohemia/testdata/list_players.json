@@ -3,5 +3,8 @@
     {"userId": "4537e0d4-f960-46ac-bafc-a0ad390b41ea", "username": "Salat Majompski", "gameClientType": "PLATFORM_PC", "platformUserId": "76561198884181842", "someNewField": 42},
     {"userId": "a814bb9c-e6a2-4518-8673-16251edb1c4c", "username": "42Трусиля₄³XXL42", "gameClientType": "PLATFORM_PC", "platformUserId": "76561199250528863"}
   ],
-  "queuePlayers": []
+  "queuePlayers": [
+    {"userId": "e341b7a7-82f7-4888-bab5-000000000001", "username": "psn-player", "gameClientType": "PLATFORM_PSN", "platformUserId": "1988494528553747446"},
+    {"userId": "299dbc18-0137-47cf-b369-000000000002", "username": "xbl-player", "gameClientType": "PLATFORM_XBL", "platformUserId": "4377A60943B8B0397988DDE201F8A58A12B12647"}
+  ]
 }
