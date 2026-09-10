@@ -7,6 +7,10 @@ services:
     image: postgres:16-alpine
     container_name: armaplayers-postgres
     restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
     environment:
       POSTGRES_USER: armaplayers
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задай POSTGRES_PASSWORD в deploy/.env}
@@ -26,6 +30,12 @@ services:
     image: ghcr.io/kolbasyatin/arma-players-backend:${OBSERVER_TAG:-latest}
     container_name: armaplayers-observer
     restart: on-failure
+    # Логи в journald: переживают пересоздание контейнера при обновлении, ротация — настройками journald.
+    # Читать: journalctl CONTAINER_NAME=armaplayers-observer -f   (или -o cat для чистого JSON)
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
     depends_on:
       postgres:
         condition: service_healthy

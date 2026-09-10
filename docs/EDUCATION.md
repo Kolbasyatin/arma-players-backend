@@ -145,3 +145,4 @@
 - ⬜ `http.ServeMux` с методом в паттерне `"GET /health"`; таймауты `http.Server`; `Shutdown` по ctx.
 - ⬜ `LEFT JOIN LATERAL` для «последний poll на сервер» в статусе (SQL).
 - ⬜ Dockerfile: multi-stage, `CGO_ENABLED=0`, distroless, `--mount=type=cache`.
+- ⬜ Семафор на канале `chan struct{}` с буфером N + `sync.WaitGroup` — ручное ограничение параллелизма (в `tracking.PollAll`, вместо `errgroup.SetLimit`).

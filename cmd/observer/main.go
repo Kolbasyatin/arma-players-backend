@@ -60,6 +60,13 @@ func run() error {
 
 	svc := app.NewServices(cfg, pool, slog.Default())
 
+	// Правила выбора серверов применяются сразу: конфиг мог измениться с прошлого скана.
+	if st, err := svc.Scanner.ApplyTrackingRules(startupCtx); err != nil {
+		slog.Warn("tracking rules at startup", "err", err)
+	} else {
+		slog.Info("tracking rules applied", "manual", st.Manual, "auto", st.Auto, "disabled", st.Disabled)
+	}
+
 	// Фоновые циклы. Каждый — горутина; первый вернувший ошибку отменяет ctx остальным.
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return svc.Scanner.RunLoop(ctx, cfg.LobbyScanInterval, cfg.LobbyScanRetry) })

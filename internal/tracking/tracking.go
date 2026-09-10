@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"armaplayers/internal/bohemia"
 	"armaplayers/internal/observation"
 	"armaplayers/internal/presence"
@@ -92,7 +90,8 @@ func NewTracker(src RoomSource, tokens TokenProvider, repo Repository, pres Pres
 	return &Tracker{src: src, tokens: tokens, repo: repo, presence: pres, cfg: cfg.withDefaults(), log: log, now: time.Now, replayed: map[int64]bool{}}
 }
 
-// RunLoop — обход сразу и далее каждые Interval, до отмены ctx.
+// RunLoop — обход сразу и далее каждые Interval, до отмены ctx. Сам обход занимает ~90% интервала
+// (см. PollAll), поэтому нагрузка на Bohemia ровная: 2 запроса на сервер, растянутые по времени.
 func (t *Tracker) RunLoop(ctx context.Context) error {
 	ticker := time.NewTicker(t.cfg.Interval)
 	defer ticker.Stop()
@@ -106,7 +105,9 @@ func (t *Tracker) RunLoop(ctx context.Context) error {
 	}
 }
 
-// PollAll опрашивает все отслеживаемые серверы, не более Concurrency одновременно.
+// PollAll опрашивает все отслеживаемые серверы, равномерно распределяя старты по интервалу:
+// N серверов за Interval → один старт каждые Interval/N, а не залп из N запросов в начале минуты.
+// Concurrency — страховка: если ответы медленнее шага, одновременно работает не больше N опросов.
 // Ошибки отдельных серверов логируются и учтены в poll_run; обход не прерывают.
 func (t *Tracker) PollAll(ctx context.Context) {
 	servers, err := t.repo.TrackedServers(ctx)
@@ -118,15 +119,38 @@ func (t *Tracker) PollAll(ctx context.Context) {
 		return
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(t.cfg.Concurrency)
-	for _, srv := range servers {
-		g.Go(func() error {
+	// Растягиваем на 90% интервала, чтобы последний опрос успел закончиться до следующего обхода.
+	spacing := t.cfg.Interval * 9 / 10 / time.Duration(len(servers))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, t.cfg.Concurrency)
+	for i, srv := range servers {
+		if i > 0 {
+			if err := sleepCtx(ctx, spacing); err != nil {
+				break // shutdown: не стартуем оставшиеся
+			}
+		}
+		sem <- struct{}{} // занять слот; блокируется, если все Concurrency заняты
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }() // освободить слот
 			t.pollServer(ctx, srv)
-			return nil
-		})
+		}()
 	}
-	_ = g.Wait()
+	wg.Wait()
+}
+
+// sleepCtx ждёт d или отмены ctx.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // pollServer — один цикл для одного сервера: RESOLVE_ROOM, затем LIST_PLAYERS.

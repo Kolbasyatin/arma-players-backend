@@ -33,7 +33,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now armaplayers-observer
 # обновление до свежего образа
 sudo systemctl restart armaplayers-observer
 curl -s localhost:8081/observation-status | jq
-docker logs -f armaplayers-observer
+journalctl CONTAINER_NAME=armaplayers-observer -f
 ```
 
 Данные Postgres — в docker volume `armaplayers_postgres-data`; бэкап: `docker exec armaplayers-postgres pg_dump -U armaplayers armaplayers | gzip > backup.sql.gz`.

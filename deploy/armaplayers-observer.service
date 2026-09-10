@@ -8,7 +8,7 @@
 #   sudo systemctl enable --now armaplayers-observer
 #
 # Обновление до свежего образа: sudo systemctl restart armaplayers-observer  (pull делается на старте)
-# Логи:                        docker logs -f armaplayers-observer
+# Логи:                        journalctl CONTAINER_NAME=armaplayers-observer -f
 # Состояние наблюдения:        curl -s localhost:8081/observation-status | jq
 
 [Unit]

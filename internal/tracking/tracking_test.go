@@ -151,3 +151,35 @@ func TestTracker_listPlayersFailureKeepsPresenceUntouched(t *testing.T) {
 		t.Errorf("runs: %+v", repo.runs)
 	}
 }
+
+func TestTracker_spreadsPollsOverInterval(t *testing.T) {
+	src := &fakeSrc{rooms: []bohemia.Room{
+		{ID: "r1", HostAddress: "10.0.0.1:2001"}, {ID: "r2", HostAddress: "10.0.0.2:2001"}, {ID: "r3", HostAddress: "10.0.0.3:2001"},
+	}}
+	repo := &fakeRepo{servers: []tracking.Server{
+		{ID: 1, HostAddress: "10.0.0.1:2001"}, {ID: 2, HostAddress: "10.0.0.2:2001"}, {ID: 3, HostAddress: "10.0.0.3:2001"},
+	}}
+	// Интервал 300ms, 3 сервера → старты через ~90ms; весь обход ≈ 180ms + время опросов.
+	tr := tracking.NewTracker(src, &fakeTokens{}, repo, &fakePresence{}, tracking.Config{Interval: 300 * time.Millisecond}, nil)
+
+	start := time.Now()
+	tr.PollAll(context.Background())
+	took := time.Since(start)
+
+	if took < 150*time.Millisecond {
+		t.Errorf("polls must be spread over the interval, whole pass took only %s", took)
+	}
+	if took > 290*time.Millisecond {
+		t.Errorf("pass must finish within the interval, took %s", took)
+	}
+	// Старты RESOLVE_ROOM идут по возрастанию времени с заметным шагом.
+	var resolves []time.Time
+	for _, r := range repo.runs {
+		if r.Type == observation.PollResolveRoom {
+			resolves = append(resolves, r.StartedAt)
+		}
+	}
+	if len(resolves) != 3 || resolves[1].Sub(resolves[0]) < 50*time.Millisecond || resolves[2].Sub(resolves[1]) < 50*time.Millisecond {
+		t.Errorf("resolve start times not spread: %v", resolves)
+	}
+}

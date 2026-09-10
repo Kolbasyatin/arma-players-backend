@@ -153,6 +153,12 @@ func (s *Scanner) scan(ctx context.Context, started time.Time, res *ScanResult) 
 	return nil
 }
 
+// ApplyTrackingRules пересчитывает выбор серверов без скана — при старте процесса,
+// чтобы изменённый TRACK_* в конфиге не ждал следующего суточного скана.
+func (s *Scanner) ApplyTrackingRules(ctx context.Context) (TrackingStats, error) {
+	return s.repo.ApplyTrackingRules(ctx, s.rules)
+}
+
 // RunRetentionLoop раз в interval удаляет сырые ответы с истёкшим сроком (AGENTS §12).
 func (s *Scanner) RunRetentionLoop(ctx context.Context, interval time.Duration) error {
 	for {
