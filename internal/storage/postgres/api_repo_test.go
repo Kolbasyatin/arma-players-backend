@@ -68,12 +68,32 @@ func TestAPIRepo_endToEnd(t *testing.T) {
 	}
 
 	// Поиск по старому нику находит игрока с новым текущим ником.
-	found, err := api.SearchPlayers(ctx, "majomp", 10)
+	found, fuzzy, err := api.SearchPlayers(ctx, "majomp", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(found) != 1 || found[0].CurrentNickname != "Salat" || len(found[0].Aliases) != 2 || found[0].Online == nil || found[0].Online.ID != 1 {
 		t.Fatalf("search: %+v", found)
+	}
+	if fuzzy {
+		t.Error("точное совпадение по подстроке не должно помечаться как fuzzy")
+	}
+
+	// Опечатка: точных совпадений нет, находится похожий — и это помечено флагом.
+	typo, fuzzy, err := api.SearchPlayers(ctx, "Salta Majompksi", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(typo) != 1 || typo[0].PlayerID != found[0].PlayerID || !fuzzy {
+		t.Errorf("fuzzy search: fuzzy=%v %+v", fuzzy, typo)
+	}
+	// Совсем чужая строка не должна находить никого даже в нечётком режиме.
+	none, _, err := api.SearchPlayers(ctx, "zzzqqqxxx", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Errorf("unrelated query must find nobody: %+v", none)
 	}
 	if len(found[0].Platforms) != 1 || found[0].Platforms[0].ID != "76561198884181842" {
 		t.Errorf("platforms: %+v", found[0].Platforms)

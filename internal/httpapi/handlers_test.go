@@ -17,6 +17,7 @@ type fakeStore struct {
 	events  []httpapi.Event
 	lastQ   httpapi.EventsQuery
 	players []httpapi.PlayerSummary
+	fuzzy   bool
 }
 
 func (f *fakeStore) Events(_ context.Context, q httpapi.EventsQuery) ([]httpapi.Event, error) {
@@ -30,8 +31,8 @@ func (f *fakeStore) Events(_ context.Context, q httpapi.EventsQuery) ([]httpapi.
 	return out, nil
 }
 func (f *fakeStore) EventsHead(context.Context) (int64, error) { return 42, nil }
-func (f *fakeStore) SearchPlayers(context.Context, string, int) ([]httpapi.PlayerSummary, error) {
-	return f.players, nil
+func (f *fakeStore) SearchPlayers(context.Context, string, int) ([]httpapi.PlayerSummary, bool, error) {
+	return f.players, f.fuzzy, nil
 }
 func (f *fakeStore) PlayersByIDs(_ context.Context, ids []int64) ([]httpapi.PlayerSummary, error) {
 	var out []httpapi.PlayerSummary
@@ -147,9 +148,15 @@ func TestAPI_players(t *testing.T) {
 		t.Errorf("short nick: want 400, got %d", code)
 	}
 	code, body := get(t, srv.URL+"/players?nick=sal", "secret")
-	if code != 200 || len(body["players"].([]any)) != 1 {
+	if code != 200 || len(body["players"].([]any)) != 1 || body["fuzzy"] != false {
 		t.Errorf("search: %d %v", code, body)
 	}
+	// Флаг fuzzy доходит до клиента: бот по нему говорит «точных совпадений нет, похожие».
+	store.fuzzy = true
+	if _, body := get(t, srv.URL+"/players?nick=sal", "secret"); body["fuzzy"] != true {
+		t.Errorf("fuzzy flag lost: %v", body)
+	}
+	store.fuzzy = false
 	// Пакетный режим: ids вместо nick.
 	code, body = get(t, srv.URL+"/players?ids=4812,777", "secret")
 	if code != 200 || len(body["players"].([]any)) != 1 {

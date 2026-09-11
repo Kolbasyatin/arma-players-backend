@@ -125,8 +125,23 @@ func scanPlayer(row pgx.Row) (httpapi.PlayerSummary, error) {
 	return p, nil
 }
 
-// SearchPlayers — по подстроке любого когда-либо наблюдённого ника, без учёта регистра.
-func (r *APIRepo) SearchPlayers(ctx context.Context, nick string, limit int) ([]httpapi.PlayerSummary, error) {
+// minSimilarity — порог похожести для нечёткого поиска. 0.3 — значение по умолчанию pg_trgm:
+// ниже начинается шум из случайных совпадений триграмм, выше не переживает одну опечатку в коротком нике.
+const minSimilarity = 0.3
+
+// SearchPlayers ищет по любому когда-либо наблюдённому нику, без учёта регистра: сначала по подстроке,
+// и только если точных совпадений нет — по похожести написания (fuzzy=true). Так опечатка не оставляет
+// человека без ответа, но и не подмешивает мусор к точному попаданию.
+func (r *APIRepo) SearchPlayers(ctx context.Context, nick string, limit int) ([]httpapi.PlayerSummary, bool, error) {
+	players, err := r.searchBySubstring(ctx, nick, limit)
+	if err != nil || len(players) > 0 {
+		return players, false, err
+	}
+	players, err = r.searchBySimilarity(ctx, nick, limit)
+	return players, len(players) > 0, err
+}
+
+func (r *APIRepo) searchBySubstring(ctx context.Context, nick string, limit int) ([]httpapi.PlayerSummary, error) {
 	rows, err := r.pool.Query(ctx, playerSummarySQL+`
 		WHERE p.id IN (SELECT a.player_id FROM player_alias a WHERE lower(a.nickname) LIKE '%' || lower($1) || '%')
 		ORDER BY p.last_seen_at DESC
@@ -134,6 +149,31 @@ func (r *APIRepo) SearchPlayers(ctx context.Context, nick string, limit int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("search players: %w", err)
 	}
+	return collectPlayers(rows)
+}
+
+// searchBySimilarity — триграммное сравнение (pg_trgm). Порядок по лучшему совпадению среди алиасов
+// игрока, а не по времени: человек ищет конкретного, и «больше похож» важнее «недавно заходил».
+// matched отбирает игроков и считает оценку, дальше — тот же playerSummarySQL, присоединённый к отбору.
+func (r *APIRepo) searchBySimilarity(ctx context.Context, nick string, limit int) ([]httpapi.PlayerSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		WITH matched AS (
+			SELECT a.player_id, max(similarity(lower(a.nickname), lower($1))) AS score
+			FROM player_alias a
+			WHERE similarity(lower(a.nickname), lower($1)) >= $3
+			GROUP BY a.player_id
+			ORDER BY score DESC
+			LIMIT $2
+		)`+playerSummarySQL+`
+		JOIN matched m ON m.player_id = p.id
+		ORDER BY m.score DESC`, nick, limit, minSimilarity)
+	if err != nil {
+		return nil, fmt.Errorf("search players (fuzzy): %w", err)
+	}
+	return collectPlayers(rows)
+}
+
+func collectPlayers(rows pgx.Rows) ([]httpapi.PlayerSummary, error) {
 	defer rows.Close()
 	var out []httpapi.PlayerSummary
 	for rows.Next() {
@@ -157,16 +197,7 @@ func (r *APIRepo) PlayersByIDs(ctx context.Context, ids []int64) ([]httpapi.Play
 	if err != nil {
 		return nil, fmt.Errorf("players by ids: %w", err)
 	}
-	defer rows.Close()
-	var out []httpapi.PlayerSummary
-	for rows.Next() {
-		p, err := scanPlayer(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return collectPlayers(rows)
 }
 
 func (r *APIRepo) Player(ctx context.Context, id int64) (httpapi.PlayerSummary, bool, error) {

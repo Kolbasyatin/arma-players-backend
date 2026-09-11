@@ -63,12 +63,12 @@ func registerAPI(mux *http.ServeMux, store Store, token string) {
 			return
 		}
 		limit := intParam(r, "limit", 20, 1, 100)
-		players, err := store.SearchPlayers(r.Context(), nick, limit)
+		players, fuzzy, err := store.SearchPlayers(r.Context(), nick, limit)
 		if err != nil {
 			serverError(w, "search players", err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"players": nonNil(players)})
+		writeJSON(w, http.StatusOK, map[string]any{"players": nonNil(players), "fuzzy": fuzzy})
 	})))
 
 	mux.Handle("GET /players/{id}", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
