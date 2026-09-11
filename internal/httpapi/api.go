@@ -97,6 +97,7 @@ type Store interface {
 	Events(ctx context.Context, q EventsQuery) ([]Event, error)
 	EventsHead(ctx context.Context) (int64, error)
 	SearchPlayers(ctx context.Context, nick string, limit int) ([]PlayerSummary, error)
+	PlayersByIDs(ctx context.Context, ids []int64) ([]PlayerSummary, error)
 	Player(ctx context.Context, id int64) (PlayerSummary, bool, error)
 	PlayerSessions(ctx context.Context, id int64, limit int) ([]Session, error)
 	Servers(ctx context.Context, trackedOnly bool, nameFilter string) ([]ServerSummary, error)

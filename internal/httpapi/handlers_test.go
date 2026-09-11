@@ -33,6 +33,18 @@ func (f *fakeStore) EventsHead(context.Context) (int64, error) { return 42, nil 
 func (f *fakeStore) SearchPlayers(context.Context, string, int) ([]httpapi.PlayerSummary, error) {
 	return f.players, nil
 }
+func (f *fakeStore) PlayersByIDs(_ context.Context, ids []int64) ([]httpapi.PlayerSummary, error) {
+	var out []httpapi.PlayerSummary
+	for _, id := range ids {
+		for _, p := range f.players {
+			if p.PlayerID == id {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) Player(_ context.Context, id int64) (httpapi.PlayerSummary, bool, error) {
 	for _, p := range f.players {
 		if p.PlayerID == id {
@@ -138,6 +150,15 @@ func TestAPI_players(t *testing.T) {
 	if code != 200 || len(body["players"].([]any)) != 1 {
 		t.Errorf("search: %d %v", code, body)
 	}
+	// Пакетный режим: ids вместо nick.
+	code, body = get(t, srv.URL+"/players?ids=4812,777", "secret")
+	if code != 200 || len(body["players"].([]any)) != 1 {
+		t.Errorf("batch by ids: %d %v", code, body)
+	}
+	if code, _ := get(t, srv.URL+"/players?ids=abc", "secret"); code != http.StatusBadRequest {
+		t.Errorf("bad ids: want 400, got %d", code)
+	}
+
 	code, body = get(t, srv.URL+"/players/4812", "secret")
 	if code != 200 || body["current_nickname"] != "Salat" {
 		t.Errorf("player: %d %v", code, body)

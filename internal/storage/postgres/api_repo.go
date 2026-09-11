@@ -146,6 +146,29 @@ func (r *APIRepo) SearchPlayers(ctx context.Context, nick string, limit int) ([]
 	return out, rows.Err()
 }
 
+// PlayersByIDs — карточки нескольких игроков одним запросом: статус всех подписок бота за один вызов.
+func (r *APIRepo) PlayersByIDs(ctx context.Context, ids []int64) ([]httpapi.PlayerSummary, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, playerSummarySQL+`
+		WHERE p.id = ANY($1)
+		ORDER BY (o.id IS NULL), p.last_seen_at DESC`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("players by ids: %w", err)
+	}
+	defer rows.Close()
+	var out []httpapi.PlayerSummary
+	for rows.Next() {
+		p, err := scanPlayer(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (r *APIRepo) Player(ctx context.Context, id int64) (httpapi.PlayerSummary, bool, error) {
 	p, err := scanPlayer(r.pool.QueryRow(ctx, playerSummarySQL+` WHERE p.id = $1`, id))
 	switch {

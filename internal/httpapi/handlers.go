@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,9 +41,25 @@ func registerAPI(mux *http.ServeMux, store Store, token string) {
 	})))
 
 	mux.Handle("GET /players", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Два режима: ids=1,2,3 — пакетный статус (для «мои подписки»); nick=… — поиск.
+		if raw := r.URL.Query().Get("ids"); raw != "" {
+			ids, err := parseIDs(raw, 500)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody("ids: "+err.Error()))
+				return
+			}
+			players, err := store.PlayersByIDs(r.Context(), ids)
+			if err != nil {
+				serverError(w, "players by ids", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"players": nonNil(players)})
+			return
+		}
+
 		nick := strings.TrimSpace(r.URL.Query().Get("nick"))
 		if len(nick) < 2 {
-			writeJSON(w, http.StatusBadRequest, errorBody("nick: at least 2 characters"))
+			writeJSON(w, http.StatusBadRequest, errorBody("nick: at least 2 characters, or pass ids"))
 			return
 		}
 		limit := intParam(r, "limit", 20, 1, 100)
@@ -129,16 +146,11 @@ func parseEventsQuery(r *http.Request) (EventsQuery, error) {
 		q.After = n
 	}
 	if v := qs.Get("player_ids"); v != "" {
-		for _, part := range strings.Split(v, ",") {
-			n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
-			if err != nil {
-				return q, errors.New("player_ids: comma-separated integers expected")
-			}
-			q.PlayerIDs = append(q.PlayerIDs, n)
+		ids, err := parseIDs(v, 1000)
+		if err != nil {
+			return q, fmt.Errorf("player_ids: %w", err)
 		}
-		if len(q.PlayerIDs) > 1000 {
-			return q, errors.New("player_ids: at most 1000")
-		}
+		q.PlayerIDs = ids
 	}
 	if v := qs.Get("types"); v != "" {
 		for _, t := range strings.Split(v, ",") {
@@ -146,6 +158,23 @@ func parseEventsQuery(r *http.Request) (EventsQuery, error) {
 		}
 	}
 	return q, nil
+}
+
+// parseIDs разбирает "1,2,3" в список id с ограничением количества.
+func parseIDs(raw string, max int) ([]int64, error) {
+	parts := strings.Split(raw, ",")
+	if len(parts) > max {
+		return nil, fmt.Errorf("at most %d values", max)
+	}
+	ids := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+		if err != nil || n <= 0 {
+			return nil, errors.New("comma-separated positive integers expected")
+		}
+		ids = append(ids, n)
+	}
+	return ids, nil
 }
 
 func intParam(r *http.Request, name string, def, min, max int) int {

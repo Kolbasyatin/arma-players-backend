@@ -86,6 +86,15 @@ func TestAPIRepo_endToEnd(t *testing.T) {
 	if _, ok, _ := api.Player(ctx, 9999); ok {
 		t.Error("missing player must be not found")
 	}
+	// Пакетный статус: онлайн-игроки первыми.
+	batch, err := api.PlayersByIDs(ctx, []int64{left.PlayerID, found[0].PlayerID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch) != 2 || batch[0].Online == nil || batch[1].Online != nil {
+		t.Errorf("batch order: online first, got %+v", batch)
+	}
+
 	sessions, _ := api.PlayerSessions(ctx, left.PlayerID, 10)
 	if len(sessions) != 1 || sessions[0].Status != "CLOSED_LEFT" || sessions[0].DurationSeconds != 60 || sessions[0].Nickname != "Bob" {
 		t.Errorf("sessions: %+v", sessions)

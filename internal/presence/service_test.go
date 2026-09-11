@@ -95,6 +95,23 @@ func (m *memStore) AppendEvent(_ context.Context, e presence.Event) error {
 	return nil
 }
 
+// sessionOf — presence-сессия игрока по его userId. Индексами пользоваться нельзя:
+// в одном наблюдении сессии создаются в порядке обхода map, а он в Go случайный.
+func (m *memStore) sessionOf(t *testing.T, userID string) presence.Session {
+	t.Helper()
+	pl, ok := m.players[userID]
+	if !ok {
+		t.Fatalf("player %q not upserted", userID)
+	}
+	for _, s := range m.presence {
+		if s.PlayerID == pl.id {
+			return s
+		}
+	}
+	t.Fatalf("no presence session for %q", userID)
+	return presence.Session{}
+}
+
 func (m *memStore) eventsOf(t presence.EventType) []presence.Event {
 	var out []presence.Event
 	for _, e := range m.events {
@@ -146,9 +163,12 @@ func TestApply_joinThenConfirmedLeave(t *testing.T) {
 	if res.Left != 1 {
 		t.Fatalf("third poll: %+v", res)
 	}
-	bob := m.presence[1]
+	bob := m.sessionOf(t, "b")
 	if bob.Status != presence.StatusClosedLeft || bob.EndedAt == nil || !bob.EndedAt.Equal(t0.Add(time.Minute)) || !bob.LastSeenAt.Equal(t0) {
 		t.Errorf("bob session: %+v", bob)
+	}
+	if alice := m.sessionOf(t, "a"); alice.Status != presence.StatusOnline || alice.EndedAt != nil {
+		t.Errorf("alice must stay online: %+v", alice)
 	}
 	left := m.eventsOf(presence.EventPlayerLeftServer)
 	if len(left) != 1 || !left[0].OccurredAt.Equal(t0.Add(time.Minute)) {
@@ -167,7 +187,7 @@ func TestApply_reappearDuringSuspected(t *testing.T) {
 	if res.Joined != 0 || len(m.presence) != 1 {
 		t.Fatalf("must reuse the same session: %+v, sessions=%d", res, len(m.presence))
 	}
-	s := m.presence[0]
+	s := m.sessionOf(t, "a")
 	if s.Status != presence.StatusOnline || s.AbsentPolls != 0 || s.FirstKnownAbsentAt != nil {
 		t.Errorf("session after return: %+v", s)
 	}
@@ -184,7 +204,7 @@ func TestApply_dataGapClosesWithoutLeaveEvent(t *testing.T) {
 	if res.DataGapClosed != 1 || res.Joined != 1 || !res.AfterDataGap {
 		t.Fatalf("after gap: %+v", res)
 	}
-	old := m.presence[0]
+	old := m.sessionOf(t, "a") // первая по порядку — закрытая по разрыву
 	if old.Status != presence.StatusClosedDataGap || !old.EndedAt.Equal(t0) {
 		t.Errorf("old session: %+v", old)
 	}
@@ -204,8 +224,8 @@ func TestApply_startupReplayFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.presence[0].StartupReplay || !m.events[0].StartupReplay {
-		t.Errorf("startup replay flag lost: %+v %+v", m.presence[0], m.events[0])
+	if !m.sessionOf(t, "a").StartupReplay || !m.events[0].StartupReplay {
+		t.Errorf("startup replay flag lost: %+v %+v", m.presence, m.events)
 	}
 }
 
@@ -222,8 +242,8 @@ func TestApply_nicknameChange(t *testing.T) {
 	if len(ev) != 1 || ev[0].Payload["old"] != "Alice" || ev[0].Payload["new"] != "Alicia" {
 		t.Errorf("nickname event: %+v", ev)
 	}
-	if m.presence[0].Nickname != "Alicia" {
-		t.Errorf("session nickname must follow the player: %+v", m.presence[0])
+	if got := m.sessionOf(t, "a"); got.Nickname != "Alicia" {
+		t.Errorf("session nickname must follow the player: %+v", got)
 	}
 }
 
