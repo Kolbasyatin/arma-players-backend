@@ -8,7 +8,7 @@
 ## Локально
 
 ```bash
-docker compose up -d --wait            # Postgres на 127.0.0.1:5433
+docker compose up -d --wait            # Postgres на 127.0.0.1:5434
 cp .env.example .env                   # заполнить TOKEN_URL (сервис arma-reforger-hz)
 go test ./...                          # интеграционные тесты идут в DATABASE_URL_TEST
 go run ./cmd/probe -host 37.48.253.41:2001   # ручная проверка протокола, без БД

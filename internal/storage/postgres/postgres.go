@@ -15,9 +15,20 @@ import (
 
 // Connect открывает пул соединений и проверяет его одним запросом.
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: parse config: %w", err)
+	}
+	// Все timestamptz приходят в UTC независимо от таймзоны хоста: так и в логах, и в JSON API
+	// время однозначно, а тесты не зависят от окружения.
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: connect: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()

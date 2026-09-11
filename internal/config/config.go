@@ -13,8 +13,10 @@ type Config struct {
 	DatabaseURL string `env:"DATABASE_URL"`
 	// TokenURL — GET-эндпоинт сервиса arma-reforger-hz, отдающего BI access token.
 	TokenURL string `env:"TOKEN_URL,required"`
-	// HTTPAddr — адрес служебного HTTP: /health и /observation-status (AGENTS §24).
+	// HTTPAddr — адрес HTTP: служебные /health, /observation-status и REST API для бота/интерфейса.
 	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8081"`
+	// APIToken — Bearer-токен для REST API. Пустой — API выключен (служебные маршруты работают).
+	APIToken string `env:"API_TOKEN"`
 
 	// Полный скан лобби (AGENTS §13): интервал, пауза после ошибки, размер страницы.
 	LobbyScanInterval time.Duration `env:"LOBBY_SCAN_INTERVAL" envDefault:"24h"`

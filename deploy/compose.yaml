@@ -49,6 +49,7 @@ services:
       DATABASE_URL: postgres://armaplayers:${POSTGRES_PASSWORD}@postgres:5432/armaplayers?sslmode=disable
       TOKEN_URL: ${TOKEN_URL:-http://host.docker.internal:8080/token}
       HTTP_ADDR: ":8081"
+      API_TOKEN: ${API_TOKEN:-}
       POLL_INTERVAL: ${POLL_INTERVAL:-1m}
       POLL_CONCURRENCY: ${POLL_CONCURRENCY:-4}
       TRACK_HOST_ADDRESSES: ${TRACK_HOST_ADDRESSES:-}

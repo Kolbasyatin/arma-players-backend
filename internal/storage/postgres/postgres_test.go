@@ -37,12 +37,12 @@ func TestMigrate(t *testing.T) {
 	err = pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.tables
 		WHERE table_schema = 'public'
-		  AND table_name IN ('server','server_identity_key','server_observation','poll_run','raw_payload','player_identity','player_platform_identity','player_alias','player_server_session','player_queue_session','domain_event')`).Scan(&tables)
+		  AND table_name IN ('server','server_identity_key','server_observation','poll_run','raw_payload','player_identity','player_platform_identity','player_alias','player_server_session','player_queue_session','domain_event','server_merge','mod','server_mod')`).Scan(&tables)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tables != 11 {
-		t.Errorf("tables: want 11, got %d", tables)
+	if tables != 14 {
+		t.Errorf("tables: want 14, got %d", tables)
 	}
 
 	// Требование проекта: у каждой колонки наших таблиц есть COMMENT ON.
@@ -53,7 +53,7 @@ func TestMigrate(t *testing.T) {
 		JOIN pg_class cl ON cl.relname = c.table_name
 		JOIN pg_namespace n ON n.oid = cl.relnamespace AND n.nspname = c.table_schema
 		WHERE c.table_schema = 'public'
-		  AND c.table_name IN ('server','server_identity_key','server_observation','poll_run','raw_payload','player_identity','player_platform_identity','player_alias','player_server_session','player_queue_session','domain_event')
+		  AND c.table_name IN ('server','server_identity_key','server_observation','poll_run','raw_payload','player_identity','player_platform_identity','player_alias','player_server_session','player_queue_session','domain_event','server_merge','mod','server_mod')
 		  AND col_description(cl.oid, c.ordinal_position) IS NULL`).Scan(&uncommented)
 	if err != nil {
 		t.Fatal(err)

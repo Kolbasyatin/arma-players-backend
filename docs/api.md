@@ -1,0 +1,131 @@
+# REST API observer'а
+
+Для внешних потребителей: телеграм-бот (отдельный проект), позже web-интерфейс. Сервис — источник данных,
+подписки/чаты/тексты сообщений живут у потребителя.
+
+- Базовый адрес: `http://<host>:8081` (в проде порт слушает только 127.0.0.1; бот на той же машине).
+- Авторизация: заголовок `Authorization: Bearer <API_TOKEN>` на всех маршрутах, кроме `/health`.
+  Без токена в конфиге сервиса API отвечает `503`. Неверный токен — `401`.
+- JSON, snake_case, время — RFC 3339 в UTC. Пустые списки — `[]`, не `null`. Ошибки — `{"error": "..."}`.
+
+## Лента событий
+
+### `GET /events`
+
+| Параметр | Тип | Значение |
+|---|---|---|
+| `after` | int64 | отдавать события с `id > after`. Курсор потребителя. По умолчанию 0 |
+| `player_ids` | `1,2,3` | только эти игроки (до 1000 id). Пусто — все |
+| `types` | `A,B` | только эти типы. Пусто — все |
+| `limit` | 1..1000 | размер страницы, по умолчанию 200 |
+| `include_replay` | `true` | включить события `startup_replay` (по умолчанию скрыты) |
+
+Ответ:
+
+```json
+{
+  "events": [
+    {
+      "id": 90311,
+      "type": "PLAYER_JOINED_SERVER",
+      "occurred_at": "2026-09-11T20:14:00Z",
+      "player_id": 4812,
+      "bohemia_user_id": "4537e0d4-f960-46ac-bafc-a0ad390b41ea",
+      "nickname": "Salat Majompski",
+      "server_id": 1,
+      "server_name": "[RU] #1 | ARMA-RUSSIAN.RU",
+      "session_id": 55123,
+      "duration_seconds": null,
+      "payload": {},
+      "startup_replay": false,
+      "after_data_gap": false
+    }
+  ],
+  "next_after": 90311
+}
+```
+
+`next_after` — значение для следующего запроса: максимальный `id` страницы, либо переданный `after`, если событий нет.
+Сохраняйте его после обработки страницы; при перезапуске продолжайте с сохранённого.
+
+Типы событий и `payload`:
+
+| `type` | Когда | `payload` | `duration_seconds` |
+|---|---|---|---|
+| `PLAYER_JOINED_SERVER` | игрок появился на сервере | `{}` | — |
+| `PLAYER_LEFT_SERVER` | подтверждённый выход (2 опроса подряд без игрока) | `{}` | длительность визита |
+| `PLAYER_ENTERED_QUEUE` | встал в очередь | `{}` | — |
+| `PLAYER_LEFT_QUEUE` | покинул очередь | `{"result": "JOINED_SERVER" \| "LEFT_QUEUE" \| "UNKNOWN", "waited_seconds": 630}` | длительность ожидания |
+| `PLAYER_NICKNAME_CHANGED` | сменил ник | `{"old": "…", "new": "…"}` | — |
+
+Флаги:
+- `startup_replay` — событие первого опроса после старта сервиса: игрок «уже был здесь», не вход. По умолчанию скрыты.
+- `after_data_gap` — событие после разрыва данных дольше 15 минут: момент входа неточен, мог быть раньше.
+- `occurred_at` у `*_LEFT_*` — первый опрос, где игрока не было; реальный выход — между предыдущим опросом и этим (интервал 1–2 минуты).
+
+Задержка: событие появляется в ленте в момент опроса сервера (раз в `POLL_INTERVAL`, сейчас 2 минуты) — не мгновенно.
+
+### `GET /events/head`
+
+`{"head": 90311}` — максимальный `id` на сейчас. Для инициализации курсора: «всё, что было до запуска бота, не нужно».
+
+## Игроки
+
+### `GET /players?nick=<подстрока>&limit=20`
+
+Поиск по подстроке **любого** когда-либо наблюдённого ника (не только текущего), без учёта регистра, минимум 2 символа.
+Ник не уникален — ответ всегда список; для подписки используйте `player_id`.
+
+```json
+{"players": [
+  {
+    "player_id": 4812,
+    "bohemia_user_id": "4537e0d4-…",
+    "current_nickname": "Salat Majompski",
+    "aliases": ["Salat Majompski", "Salat"],
+    "platforms": [{"type": "PLATFORM_PC", "id": "76561198884181842", "last_seen_at": "…"}],
+    "first_seen_at": "…", "last_seen_at": "…",
+    "online": {"id": 1, "name": "[RU] #1 | ARMA-RUSSIAN.RU", "host_address": "37.48.253.41:2001", "since": "…"},
+    "last_server": {"id": 1, "name": "…", "host_address": "…"},
+    "sessions_total": 17
+  }
+]}
+```
+
+`online` — `null`, если открытой сессии нет. Отличать тёзок удобно по `online`/`last_server`, `platforms` и `last_seen_at`.
+
+### `GET /players/{id}` — та же карточка одного игрока; `404`, если нет.
+
+### `GET /players/{id}/sessions?limit=50` — визиты, свежие первыми:
+
+```json
+{"sessions": [{"id": 55123, "server_id": 1, "server_name": "…", "nickname": "Salat", "first_seen_at": "…", "last_seen_at": "…",
+               "ended_at": null, "status": "ONLINE", "duration_seconds": 3720}]}
+```
+
+`status`: `ONLINE` | `SUSPECTED_GONE` | `CLOSED_LEFT` | `CLOSED_DATA_GAP`.
+
+## Серверы
+
+### `GET /servers?tracked=true&name=<подстрока>`
+
+```json
+{"servers": [{"id": 1, "name": "…", "host_address": "37.48.253.41:2001", "active": true, "tracked": true, "tracking_source": "MANUAL",
+              "players": 108, "player_limit": 128, "queue": 4, "observed_at": "…", "last_seen_at": "…"}]}
+```
+
+Без `tracked=true` — весь каталог (до 500, отслеживаемые первыми). `players`/`queue` — из последнего снимка.
+
+## Рекомендуемый цикл бота
+
+1. При первом старте: `GET /events/head` → сохранить как курсор.
+2. Каждые 10–20 с: `GET /events?after=<курсор>&player_ids=<все, на кого есть подписки>` → разослать → сохранить `next_after`.
+   Делать запрос и без подписок, чтобы курсор двигался.
+3. `/watch <ник>` → `GET /players?nick=` → один результат: подписать; несколько: показать выбор (ник, где сейчас, платформа).
+   Хранить `player_id`, не ник: ник в событиях приходит актуальный.
+4. Подписка «только на сервере» — фильтровать по `server_id` из события; список — `GET /servers?tracked=true`.
+
+## Служебные
+
+- `GET /health` — `{"status":"ok"}`, без токена.
+- `GET /observation-status` — свежесть данных по серверам, статусы опросов за час (без токена; только 127.0.0.1).

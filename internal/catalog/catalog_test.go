@@ -78,6 +78,8 @@ func (f *fakeRepo) ApplyTrackingRules(context.Context, catalog.TrackingRules) (c
 
 func (f *fakeRepo) DeleteExpiredRawPayloads(context.Context, time.Time) (int64, error) { return 0, nil }
 
+func (f *fakeRepo) MergeDuplicateRooms(context.Context) (int64, error) { return 0, nil }
+
 func (f *fakeRepo) savedPages() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

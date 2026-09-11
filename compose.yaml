@@ -1,4 +1,4 @@
-# Локальная инфраструктура разработки. Порт 5433, потому что 5432 на этой машине занят другим проектом.
+# Локальная инфраструктура разработки. Порт 5434: 5432 занят другим проектом, 5433 — SSH-туннель к прод-БД.
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: armaplayers
       POSTGRES_DB: armaplayers
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

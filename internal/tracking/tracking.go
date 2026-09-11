@@ -18,9 +18,10 @@ import (
 
 // Server — отслеживаемый сервер из каталога.
 type Server struct {
-	ID          int64
-	Name        string
-	HostAddress string
+	ID            int64
+	Name          string
+	HostAddress   string
+	CurrentRoomID string // roomId с прошлого наблюдения; запасной путь, если по адресу комнату не нашли
 }
 
 // RoomSource — Bohemia API; реализация *bohemia.Client.
@@ -169,24 +170,36 @@ func (t *Tracker) pollServer(ctx context.Context, srv Server) {
 		return
 	}
 	room, found := pickRoom(search.Rooms, srv.HostAddress)
-	if !found {
+	roomID := room.ID
+	if found {
+		observedAt := t.now()
+		if err := t.repo.SaveRoomObservation(ctx, srv.ID, room, observedAt, search.Raw, observedAt.Add(t.cfg.RawRetention)); err != nil {
+			t.log.Error("tracking: save room observation", "server_id", srv.ID, "err", err)
+		}
+		t.record(ctx, srv.ID, observation.PollResolveRoom, started, room.ID, nil, &room)
+	} else {
+		// Сервер не найден по адресу — переехал на другой порт/IP или перезапускается. roomId при переезде
+		// сохраняется (наблюдение 2026-09-11), поэтому пробуем listPlayers по прошлому roomId: сессии игроков
+		// не рвутся, а адрес обновит следующий скан лобби через резолюцию по ROOM_ID.
 		t.record(ctx, srv.ID, observation.PollResolveRoom, started, "", errRoomNotFound, nil)
+		if srv.CurrentRoomID == "" {
+			return
+		}
+		roomID = srv.CurrentRoomID
+	}
+
+	// 2. Игроки.
+	var roomPtr *bohemia.Room
+	if found {
+		roomPtr = &room
+	}
+	started = t.now()
+	list, err := t.src.ListPlayers(ctx, accessToken, roomID)
+	if err != nil {
+		t.record(ctx, srv.ID, observation.PollListPlayers, started, roomID, err, roomPtr)
 		return
 	}
 	observedAt := t.now()
-	if err := t.repo.SaveRoomObservation(ctx, srv.ID, room, observedAt, search.Raw, observedAt.Add(t.cfg.RawRetention)); err != nil {
-		t.log.Error("tracking: save room observation", "server_id", srv.ID, "err", err)
-	}
-	t.record(ctx, srv.ID, observation.PollResolveRoom, started, room.ID, nil, &room)
-
-	// 2. Игроки.
-	started = t.now()
-	list, err := t.src.ListPlayers(ctx, accessToken, room.ID)
-	if err != nil {
-		t.record(ctx, srv.ID, observation.PollListPlayers, started, room.ID, err, &room)
-		return
-	}
-	observedAt = t.now()
 	if _, err := t.repo.SaveRawPayload(ctx, "LIST_PLAYERS", observedAt, observedAt.Add(t.cfg.RawRetention), list.Raw); err != nil {
 		t.log.Error("tracking: save raw listPlayers", "server_id", srv.ID, "err", err)
 	}
@@ -197,13 +210,13 @@ func (t *Tracker) pollServer(ctx context.Context, srv Server) {
 		StartupReplay: !t.wasReplayed(srv.ID),
 	})
 	if err != nil {
-		t.record(ctx, srv.ID, observation.PollListPlayers, started, room.ID, err, &room)
+		t.record(ctx, srv.ID, observation.PollListPlayers, started, roomID, err, roomPtr)
 		return
 	}
 	t.markReplayed(srv.ID)
 
 	connected, queued := len(list.ConnectedPlayers), len(list.QueuePlayers)
-	run := t.buildRun(srv.ID, observation.PollListPlayers, started, room.ID, nil, &room)
+	run := t.buildRun(srv.ID, observation.PollListPlayers, started, roomID, nil, roomPtr)
 	run.ConnectedCount, run.QueueCount = &connected, &queued
 	if err := t.repo.RecordPollRun(ctx, run); err != nil {
 		t.log.Error("tracking: record poll_run", "server_id", srv.ID, "err", err)

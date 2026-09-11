@@ -107,7 +107,7 @@ func TestTracker_successfulPoll(t *testing.T) {
 	}
 }
 
-func TestTracker_roomNotFound(t *testing.T) {
+func TestTracker_roomNotFound_noKnownRoom(t *testing.T) {
 	src := &fakeSrc{rooms: []bohemia.Room{{ID: "x", HostAddress: "10.0.0.9:2001"}}}
 	repo := &fakeRepo{servers: []tracking.Server{srv()}}
 	pres := &fakePresence{}
@@ -118,6 +118,46 @@ func TestTracker_roomNotFound(t *testing.T) {
 	}
 	if len(pres.obs) != 0 {
 		t.Error("presence must not be touched when room not found")
+	}
+}
+
+// Сервер переехал: по адресу не найден, но прошлый roomId жив → игроки берутся по нему, сессии не рвутся.
+func TestTracker_roomNotFound_fallsBackToKnownRoomID(t *testing.T) {
+	src := &fakeSrc{
+		rooms:   nil,
+		players: bohemia.ListPlayersResponse{ConnectedPlayers: []bohemia.Player{{UserID: "a"}}},
+	}
+	s := srv()
+	s.CurrentRoomID = "room-from-yesterday"
+	repo := &fakeRepo{servers: []tracking.Server{s}}
+	pres := &fakePresence{}
+	tracking.NewTracker(src, &fakeTokens{}, repo, pres, tracking.Config{}, nil).PollAll(context.Background())
+
+	if len(repo.runs) != 2 || repo.runs[0].Status != observation.StatusRoomNotFound || repo.runs[1].Status != observation.StatusSuccess || repo.runs[1].RoomID != "room-from-yesterday" {
+		t.Fatalf("runs: %+v", repo.runs)
+	}
+	if len(pres.obs) != 1 || len(pres.obs[0].Connected) != 1 {
+		t.Errorf("presence must receive players via fallback roomId: %+v", pres.obs)
+	}
+	if len(repo.rooms) != 0 {
+		t.Error("no room observation without search result")
+	}
+}
+
+// Прошлый roomId тоже мёртв (рестарт с новым roomId) → фиксируем ROOM_NOT_FOUND от listPlayers, presence не трогаем.
+func TestTracker_roomNotFound_staleRoomIDGone(t *testing.T) {
+	src := &fakeSrc{listErr: &bohemia.Error{Kind: bohemia.KindRoomNotFound, Op: "listPlayers", HTTPStatus: 404}}
+	s := srv()
+	s.CurrentRoomID = "stale"
+	repo := &fakeRepo{servers: []tracking.Server{s}}
+	pres := &fakePresence{}
+	tracking.NewTracker(src, &fakeTokens{}, repo, pres, tracking.Config{}, nil).PollAll(context.Background())
+
+	if len(repo.runs) != 2 || repo.runs[1].Status != observation.StatusRoomNotFound {
+		t.Fatalf("runs: %+v", repo.runs)
+	}
+	if len(pres.obs) != 0 {
+		t.Error("presence must not be touched")
 	}
 }
 

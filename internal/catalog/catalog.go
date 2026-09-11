@@ -58,6 +58,8 @@ type Repository interface {
 	ApplyTrackingRules(ctx context.Context, rules TrackingRules) (TrackingStats, error)
 	// DeleteExpiredRawPayloads удаляет сырые ответы с истёкшим сроком. Возвращает число удалённых.
 	DeleteExpiredRawPayloads(ctx context.Context, now time.Time) (int64, error)
+	// MergeDuplicateRooms схлопывает серверы с общим ROOM_ID (переезд адреса). Возвращает число слияний.
+	MergeDuplicateRooms(ctx context.Context) (int64, error)
 }
 
 // Scanner выполняет полный скан лобби.
@@ -85,6 +87,7 @@ type ScanResult struct {
 	Rooms          int
 	ServersCreated int
 	Deactivated    int64
+	Merged         int64
 	Tracking       TrackingStats
 	Duration       time.Duration
 }
@@ -145,6 +148,10 @@ func (s *Scanner) scan(ctx context.Context, started time.Time, res *ScanResult) 
 	res.Deactivated, err = s.repo.DeactivateUnseen(ctx, started)
 	if err != nil {
 		return fmt.Errorf("lobby scan: deactivate unseen: %w", err)
+	}
+	res.Merged, err = s.repo.MergeDuplicateRooms(ctx)
+	if err != nil {
+		return fmt.Errorf("lobby scan: merge duplicates: %w", err)
 	}
 	res.Tracking, err = s.repo.ApplyTrackingRules(ctx, s.rules)
 	if err != nil {

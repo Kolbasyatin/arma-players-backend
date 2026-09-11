@@ -35,7 +35,7 @@ func (s *Scanner) RunLoop(ctx context.Context, interval, retry time.Duration) er
 			continue
 		}
 		s.log.Info("lobby scan finished", "pages", res.Pages, "rooms", res.Rooms,
-			"new_servers", res.ServersCreated, "deactivated", res.Deactivated,
+			"new_servers", res.ServersCreated, "deactivated", res.Deactivated, "merged", res.Merged,
 			"tracking_manual", res.Tracking.Manual, "tracking_auto", res.Tracking.Auto, "tracking_disabled", res.Tracking.Disabled,
 			"duration", res.Duration.Round(time.Millisecond).String())
 	}

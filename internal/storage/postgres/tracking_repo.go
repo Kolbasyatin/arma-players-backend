@@ -25,7 +25,7 @@ const sourceTrackingPoll = "TRACKING_POLL"
 
 func (r *TrackingRepo) TrackedServers(ctx context.Context) ([]tracking.Server, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, display_name, current_host_address
+		SELECT id, display_name, current_host_address, COALESCE(current_room_id, '')
 		FROM server
 		WHERE tracking_enabled AND merged_into_server_id IS NULL AND current_host_address IS NOT NULL
 		ORDER BY id`)
@@ -37,7 +37,7 @@ func (r *TrackingRepo) TrackedServers(ctx context.Context) ([]tracking.Server, e
 	var out []tracking.Server
 	for rows.Next() {
 		var s tracking.Server
-		if err := rows.Scan(&s.ID, &s.Name, &s.HostAddress); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.HostAddress, &s.CurrentRoomID); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -58,11 +58,20 @@ func (r *TrackingRepo) SaveRoomObservation(ctx context.Context, serverID int64, 
 		observedAt, rawExpiresAt, raw).Scan(&rawID); err != nil {
 		return fmt.Errorf("insert raw_payload: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	var currentHash *string
+	if err := tx.QueryRow(ctx, `
 		UPDATE server
 		SET display_name = $2, current_room_id = $3, last_seen_at = $4, active = true, updated_at = now()
-		WHERE id = $1`, serverID, room.Name, room.ID, observedAt); err != nil {
+		WHERE id = $1
+		RETURNING mod_set_hash`, serverID, room.Name, room.ID, observedAt).Scan(&currentHash); err != nil {
 		return fmt.Errorf("update server: %w", err)
+	}
+	hash := ""
+	if currentHash != nil {
+		hash = *currentHash
+	}
+	if _, err := syncServerMods(ctx, tx, serverID, hash, room.Mods, observedAt); err != nil {
+		return fmt.Errorf("mods: %w", err)
 	}
 	if err := upsertIdentityKeys(ctx, tx, serverID, &room, observedAt); err != nil {
 		return fmt.Errorf("identity keys: %w", err)

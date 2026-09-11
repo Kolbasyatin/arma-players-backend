@@ -31,7 +31,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := postgres.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `TRUNCATE domain_event, player_queue_session, player_server_session, player_alias, player_platform_identity, player_identity, poll_run, server_observation, server_identity_key, server, raw_payload RESTART IDENTITY CASCADE`)
+	_, err = pool.Exec(ctx, `TRUNCATE domain_event, player_queue_session, player_server_session, player_alias, player_platform_identity, player_identity, poll_run, server_observation, server_identity_key, server_merge, server_mod, mod, server, raw_payload RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestCatalogRepo_SaveLobbyPage(t *testing.T) {
 		t.Errorf("first page: %+v", stats)
 	}
 
-	// Второй скан через час: тот же адрес, новый roomId и имя → тот же сервер, новых нет.
+	// Второй скан через час: тот же адрес, новый roomId и имя → тот же сервер (рестарт), новых нет.
 	t1 := t0.Add(time.Hour)
 	rooms[0].ID = "room-after-restart"
 	rooms[0].Name = "renamed"
@@ -218,5 +218,134 @@ func TestCatalogRepo_DeleteExpiredRawPayloads(t *testing.T) {
 	pool.QueryRow(ctx, `SELECT count(*) FROM server_observation WHERE raw_payload_id IS NULL`).Scan(&orphaned)
 	if orphaned != 1 {
 		t.Errorf("observations with NULL raw_payload_id: want 1, got %d", orphaned)
+	}
+}
+
+func TestCatalogRepo_resolveByRoomIDWhenAddressChanges(t *testing.T) {
+	pool := testPool(t)
+	repo := postgres.NewCatalogRepo(pool)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 11, 6, 0, 0, 0, time.UTC)
+
+	room := bohemia.Room{ID: "room-A", HostAddress: "69.67.175.16:2008", Name: "WCS NA6", SessionID: "sess-1"}
+	if _, err := repo.SaveLobbyPage(ctx, t0, []bohemia.Room{room}, []byte(`{}`), t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	// Переезд на другой порт с тем же roomId → тот же сервер, адрес обновлён, новой записи нет.
+	room.HostAddress = "69.67.175.16:2010"
+	stats, err := repo.SaveLobbyPage(ctx, t0.Add(2*time.Hour), []bohemia.Room{room}, []byte(`{}`), t0.Add(3*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ServersCreated != 0 {
+		t.Fatalf("address change with same roomId must not create a server: %+v", stats)
+	}
+	var servers, addrKeys int
+	var addr string
+	pool.QueryRow(ctx, `SELECT count(*) FROM server`).Scan(&servers)
+	pool.QueryRow(ctx, `SELECT current_host_address FROM server WHERE id = 1`).Scan(&addr)
+	pool.QueryRow(ctx, `SELECT count(*) FROM server_identity_key WHERE server_id = 1 AND key_type = 'HOST_ADDRESS'`).Scan(&addrKeys)
+	if servers != 1 || addr != "69.67.175.16:2010" || addrKeys != 2 {
+		t.Errorf("servers=%d addr=%s addrKeys=%d", servers, addr, addrKeys)
+	}
+}
+
+func TestCatalogRepo_MergeDuplicateRooms(t *testing.T) {
+	pool := testPool(t)
+	repo := postgres.NewCatalogRepo(pool)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 11, 6, 0, 0, 0, time.UTC)
+
+	// Имитация дублей, созданных до резолюции по roomId: две записи с одним ROOM_ID.
+	_, err := pool.Exec(ctx, `
+		INSERT INTO server (display_name, current_host_address, current_room_id, first_seen_at, last_seen_at, tracking_enabled, tracking_source, active)
+		VALUES ('old', '1.1.1.1:2001', 'room-X', $1, $1, false, NULL, false),
+		       ('new', '1.1.1.1:2002', 'room-X', $2, $2, true, 'AUTO', true)`, t0, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO server_identity_key (server_id, key_type, key_value, first_seen_at, last_seen_at)
+		VALUES (1, 'ROOM_ID', 'room-X', $1, $1), (2, 'ROOM_ID', 'room-X', $2, $2)`, t0, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := repo.MergeDuplicateRooms(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("merged: want 1, got %d", n)
+	}
+	var mergedInto *int64
+	var keepAddr, keepSource string
+	var keepTracked, keepActive, victimTracked bool
+	pool.QueryRow(ctx, `SELECT merged_into_server_id, tracking_enabled FROM server WHERE id = 2`).Scan(&mergedInto, &victimTracked)
+	pool.QueryRow(ctx, `SELECT current_host_address, tracking_enabled, COALESCE(tracking_source,''), active FROM server WHERE id = 1`).Scan(&keepAddr, &keepTracked, &keepSource, &keepActive)
+	if mergedInto == nil || *mergedInto != 1 || victimTracked {
+		t.Errorf("victim: merged_into=%v tracked=%v", mergedInto, victimTracked)
+	}
+	if keepAddr != "1.1.1.1:2002" || !keepTracked || keepSource != "AUTO" || !keepActive {
+		t.Errorf("canonical: addr=%s tracked=%v source=%s active=%v", keepAddr, keepTracked, keepSource, keepActive)
+	}
+	// Повторный вызов — no-op.
+	if n, _ := repo.MergeDuplicateRooms(ctx); n != 0 {
+		t.Errorf("second merge must be no-op, got %d", n)
+	}
+	// Резолюция по любому из адресов и по roomId ведёт в канонический сервер 1.
+	stats, err := repo.SaveLobbyPage(ctx, t0.Add(2*time.Hour), []bohemia.Room{{ID: "room-X", HostAddress: "1.1.1.1:2002", Name: "new"}}, []byte(`{}`), t0.Add(3*time.Hour))
+	if err != nil || stats.ServersCreated != 0 {
+		t.Errorf("resolve after merge: %+v %v", stats, err)
+	}
+	var obsServer int64
+	pool.QueryRow(ctx, `SELECT server_id FROM server_observation ORDER BY id DESC LIMIT 1`).Scan(&obsServer)
+	if obsServer != 1 {
+		t.Errorf("observation must go to canonical server 1, got %d", obsServer)
+	}
+}
+
+func TestCatalogRepo_modsPersisted(t *testing.T) {
+	pool := testPool(t)
+	repo := postgres.NewCatalogRepo(pool)
+	ctx := context.Background()
+	t0 := time.Date(2026, 9, 11, 6, 0, 0, 0, time.UTC)
+
+	rooms := loadRooms(t) // fixture: 3 мода
+	if len(rooms[0].Mods) != 3 {
+		t.Fatalf("fixture must contain 3 mods, got %d", len(rooms[0].Mods))
+	}
+	for i := 0; i < 3; i++ { // три скана с неизменным набором
+		if _, err := repo.SaveLobbyPage(ctx, t0.Add(time.Duration(i)*time.Hour), rooms, []byte(`{}`), t0.Add(24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mods, serverMods int
+	var hash *string
+	pool.QueryRow(ctx, `SELECT count(*) FROM mod`).Scan(&mods)
+	pool.QueryRow(ctx, `SELECT count(*) FROM server_mod WHERE server_id = 1`).Scan(&serverMods)
+	pool.QueryRow(ctx, `SELECT mod_set_hash FROM server WHERE id = 1`).Scan(&hash)
+	if mods != 3 || serverMods != 3 || hash == nil {
+		t.Fatalf("after 3 identical scans: mods=%d server_mods=%d hash=%v", mods, serverMods, hash)
+	}
+
+	// Обновили версию одного мода → новая строка истории, старая осталась, хеш сменился.
+	rooms[0].Mods[0].Version = "9.9.9"
+	if _, err := repo.SaveLobbyPage(ctx, t0.Add(4*time.Hour), rooms, []byte(`{}`), t0.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var newHash *string
+	pool.QueryRow(ctx, `SELECT count(*) FROM server_mod WHERE server_id = 1`).Scan(&serverMods)
+	pool.QueryRow(ctx, `SELECT mod_set_hash FROM server WHERE id = 1`).Scan(&newHash)
+	if serverMods != 4 || newHash == nil || *newHash == *hash {
+		t.Errorf("after version change: server_mods=%d hash changed=%v", serverMods, newHash != nil && *newHash != *hash)
+	}
+
+	var modCount int
+	var clientTypes []string
+	var queueType, hosted string
+	pool.QueryRow(ctx, `SELECT mod_count, supported_game_client_types, queue_type, hosted_scenario_mod_id FROM server_observation WHERE server_id = 1 ORDER BY id DESC LIMIT 1`).Scan(&modCount, &clientTypes, &queueType, &hosted)
+	if modCount != 3 || len(clientTypes) != 3 || queueType != "REGULAR" || hosted == "" {
+		t.Errorf("observation extra fields: mods=%d types=%v queue=%q hosted=%q", modCount, clientTypes, queueType, hosted)
 	}
 }

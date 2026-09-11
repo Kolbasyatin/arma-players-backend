@@ -146,3 +146,9 @@
 - ⬜ `LEFT JOIN LATERAL` для «последний poll на сервер» в статусе (SQL).
 - ⬜ Dockerfile: multi-stage, `CGO_ENABLED=0`, distroless, `--mount=type=cache`.
 - ⬜ Семафор на канале `chan struct{}` с буфером N + `sync.WaitGroup` — ручное ограничение параллелизма (в `tracking.PollAll`, вместо `errgroup.SetLimit`).
+
+## 2026-09-11 — на что посмотреть
+- ⬜ `crypto/sha1` + `sort.Strings` для хеша набора (`modSetHash`); хеш как дешёвая проверка «изменилось ли».
+- ⬜ Именованные возвращаемые значения `(serverID int64, modHash string, created bool, err error)` в `resolveOrCreateServer`.
+- ⬜ `text[]` ↔ `[]string` в pgx без конвертации; `RETURNING` в UPDATE.
+- ⬜ CTE-цепочка с несколькими UPDATE … RETURNING в одном запросе (`MergeDuplicateRooms`) — SQL.

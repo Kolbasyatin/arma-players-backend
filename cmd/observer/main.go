@@ -76,7 +76,7 @@ func run() error {
 	g.Go(func() error { return svc.Tracker.RunLoop(ctx) })
 	g.Go(func() error { return svc.Scanner.RunRetentionLoop(ctx, cfg.RetentionInterval) })
 
-	srv := httpapi.NewServer(cfg.HTTPAddr, postgres.NewStatusRepo(pool))
+	srv := httpapi.NewServer(cfg.HTTPAddr, postgres.NewStatusRepo(pool), postgres.NewAPIRepo(pool), cfg.APIToken)
 	g.Go(func() error {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http: %w", err)
@@ -90,7 +90,7 @@ func run() error {
 		return srv.Shutdown(shutdownCtx)
 	})
 
-	slog.Info("observer started", "http_addr", cfg.HTTPAddr, "lobby_scan_interval", cfg.LobbyScanInterval.String(),
+	slog.Info("observer started", "http_addr", cfg.HTTPAddr, "api_enabled", cfg.APIToken != "", "lobby_scan_interval", cfg.LobbyScanInterval.String(),
 		"poll_interval", cfg.PollInterval.String(), "manual_tracked", len(cfg.TrackHostAddresses),
 		"auto_min_players", cfg.TrackAutoMinPlayers, "auto_max_servers", cfg.TrackAutoMaxServers)
 

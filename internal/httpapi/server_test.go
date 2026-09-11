@@ -17,7 +17,7 @@ func (f fakeStatus) Status(context.Context) (httpapi.Status, error) { return f.s
 
 func TestServer_endpoints(t *testing.T) {
 	now := time.Now().UTC()
-	srv := httptest.NewServer(httpapi.NewServer(":0", fakeStatus{st: httpapi.Status{Now: now, ServersTracked: 3, PollsLastHour: map[string]int{"SUCCESS": 10}}}).Handler)
+	srv := httptest.NewServer(httpapi.NewServer(":0", fakeStatus{st: httpapi.Status{Now: now, ServersTracked: 3, PollsLastHour: map[string]int{"SUCCESS": 10}}}, nil, "").Handler)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/health")
