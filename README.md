@@ -16,6 +16,18 @@ go run ./cmd/observer                  # сервис: миграции → ск
 curl -s localhost:8081/observation-status | jq
 ```
 
+## Запросы к API руками
+
+`http/api.http` — JetBrains HTTP Client (GoLand: открыть и нажать ▶). Два окружения в
+`http/http-client.env.json`: `local` (сервис на этой машине, порт 8081) и `prod` (через SSH-туннель).
+
+```bash
+cp http/http-client.private.env.json.example http/http-client.private.env.json   # сюда API_TOKEN
+ssh -N -L 18081:127.0.0.1:8081 <пользователь>@<сервер>                            # для окружения prod
+```
+
+Приватный файл с токенами в `.gitignore`.
+
 ## Прод
 
 Образ собирает GitHub Actions при push в `main` (и по тегам `v*`) и публикует в

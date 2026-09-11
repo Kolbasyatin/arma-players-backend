@@ -6,3 +6,6 @@ deploy/.env
 
 # логи прод-контейнера
 logs/
+
+# приватные значения для http-клиента (токены)
+http/http-client.private.env.json

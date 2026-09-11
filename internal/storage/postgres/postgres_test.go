@@ -61,4 +61,14 @@ func TestMigrate(t *testing.T) {
 	if uncommented != 0 {
 		t.Errorf("колонок без COMMENT ON: %d", uncommented)
 	}
+
+	// Индекс под запрос «последний успешный listPlayers по серверу»: он выполняется на каждом
+	// poll каждого сервера, и без индекса Postgres сортирует всю историю сервера.
+	var hasIndex bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'poll_run_last_success_idx')`).Scan(&hasIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !hasIndex {
+		t.Error("нет индекса poll_run_last_success_idx")
+	}
 }

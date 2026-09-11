@@ -65,7 +65,7 @@ services:
       LOG_MAX_BACKUPS: ${LOG_MAX_BACKUPS:-10}
       LOG_MAX_AGE_DAYS: ${LOG_MAX_AGE_DAYS:-30}
     ports:
-      - "127.0.0.1:8081:8081"
+      - "${API_BIND_ADDR:-127.0.0.1}:8081:8081"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

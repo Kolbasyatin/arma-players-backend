@@ -1,0 +1,92 @@
+### REST API observer'а. Формат JetBrains HTTP Client (GoLand: открыть и нажать ▶).
+### Окружения — в http/http-client.env.json, токен — в http/http-client.private.env.json (gitignored):
+###   cp http/http-client.private.env.json.example http/http-client.private.env.json
+### и вписать туда API_TOKEN сервиса для нужного окружения.
+###
+### ОКРУЖЕНИЯ
+###   local — сервис запущен на этой машине (go run ./cmd/observer), порт 8081.
+###   prod  — сервис на сервере. Порт наружу не публикуется, поэтому нужен SSH-туннель:
+###       ssh -N -L 18081:127.0.0.1:8081 <пользователь>@<сервер>
+###     Туннель должен быть открыт, пока идут запросы.
+###
+### Контракт целиком — docs/api.md.
+
+### Здоровье процесса. Единственный маршрут без токена; им же пользуется healthcheck.
+GET http://{{apiHost}}/health
+
+### Состояние наблюдения: свежесть данных по каждому отслеживаемому серверу, статусы опросов
+### за час, счётчики игроков и сессий. Тоже без токена — персональных данных не содержит.
+### Смотреть в первую очередь, когда «бот молчит»: если data_age_seconds большой, дело не в боте.
+GET http://{{apiHost}}/observation-status
+
+### Текущий конец ленты событий. С него начинает бот при первом запуске, чтобы не разослать историю.
+GET http://{{apiHost}}/events/head
+Authorization: Bearer {{apiToken}}
+
+> {%
+    // Запоминаем голову: следующий запрос ленты пойдёт от неё минус запас.
+    client.global.set("eventsHead", response.body.head);
+%}
+
+### Последние события. after — курсор: отдаются только события с id больше него.
+### Здесь берём с запасом назад от головы, чтобы что-то увидеть на свежей базе.
+GET http://{{apiHost}}/events?after={{eventsHead}}&limit=20
+Authorization: Bearer {{apiToken}}
+
+### Лента с фильтром по игрокам — так её и запрашивает бот: только те, на кого есть подписки.
+### Без фильтра приедут события всех сорока тысяч игроков.
+GET http://{{apiHost}}/events?after=0&player_ids={{playerId}}&limit=50
+Authorization: Bearer {{apiToken}}
+
+### Только входы и выходы, без очереди и смен ника.
+GET http://{{apiHost}}/events?after=0&types=PLAYER_JOINED_SERVER,PLAYER_LEFT_SERVER&limit=20
+Authorization: Bearer {{apiToken}}
+
+### С событиями первого опроса после старта сервиса. По умолчанию они скрыты: это не входы,
+### а «игрок уже был здесь», и рассылать их нельзя.
+GET http://{{apiHost}}/events?after=0&limit=20&include_replay=true
+Authorization: Bearer {{apiToken}}
+
+### Поиск игрока по части любого когда-либо наблюдённого ника, без учёта регистра.
+### fuzzy=true в ответе означает «точных совпадений нет, это похожие по написанию».
+GET http://{{apiHost}}/players?nick={{playerNick}}&limit=10
+Authorization: Bearer {{apiToken}}
+
+> {%
+    // Первый найденный игрок — для следующих запросов, чтобы не подставлять id руками.
+    if (response.body.players && response.body.players.length > 0) {
+        client.global.set("foundPlayerId", response.body.players[0].player_id);
+    }
+%}
+
+### Поиск с опечаткой: точных совпадений нет, отвечает нечёткий поиск (fuzzy=true).
+GET http://{{apiHost}}/players?nick=salta majompksi&limit=5
+Authorization: Bearer {{apiToken}}
+
+### Карточка игрока: ники, платформы, где сейчас или где был последний раз, число визитов.
+GET http://{{apiHost}}/players/{{foundPlayerId}}
+Authorization: Bearer {{apiToken}}
+
+### Несколько игроков одним запросом — так бот показывает статус всех подписок чата.
+### Онлайн-игроки идут первыми.
+GET http://{{apiHost}}/players?ids={{foundPlayerId}},{{playerId}}
+Authorization: Bearer {{apiToken}}
+
+### История визитов: когда, куда, под каким ником и сколько пробыл.
+GET http://{{apiHost}}/players/{{foundPlayerId}}/sessions?limit=20
+Authorization: Bearer {{apiToken}}
+
+### Отслеживаемые серверы: только на них видны игроки.
+GET http://{{apiHost}}/servers?tracked=true
+Authorization: Bearer {{apiToken}}
+
+### Весь каталог с поиском по названию — в том числе серверы, которые не отслеживаются.
+GET http://{{apiHost}}/servers?name={{serverName}}
+Authorization: Bearer {{apiToken}}
+
+### Проверка авторизации: без заголовка должно быть 401.
+GET http://{{apiHost}}/events/head
+
+### Проверка авторизации: с неверным токеном тоже 401.
+GET http://{{apiHost}}/events/head
+Authorization: Bearer wrong-token
