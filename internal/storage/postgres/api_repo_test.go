@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -44,6 +45,22 @@ func TestAPIRepo_endToEnd(t *testing.T) {
 	if len(events) != 2 || events[0].Type != "PLAYER_NICKNAME_CHANGED" || events[1].Type != "PLAYER_LEFT_SERVER" {
 		t.Fatalf("events: %+v", events)
 	}
+	// У смены ника сессии нет, поэтому ник должен браться из payload, а не из текущего имени игрока:
+	// иначе выходит «Новое имя теперь Новое имя».
+	renamed := events[0]
+	if renamed.Nickname != "Salat Majompski" {
+		t.Errorf("ник события переименования должен быть СТАРЫМ, получено %q", renamed.Nickname)
+	}
+	var payload struct {
+		Old string `json:"old"`
+		New string `json:"new"`
+	}
+	if err := json.Unmarshal(renamed.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Old != "Salat Majompski" || payload.New != "Salat" {
+		t.Errorf("payload переименования: %+v", payload)
+	}
 	left := events[1]
 	if left.Nickname != "Bob" || left.ServerName == "" || left.DurationSeconds == nil || *left.DurationSeconds != 60 {
 		t.Errorf("LEFT event enrichment: %+v", left)
@@ -67,6 +84,18 @@ func TestAPIRepo_endToEnd(t *testing.T) {
 		t.Errorf("player filter: %+v", bobOnly)
 	}
 
+	// Регистр не должен влиять ни на что: человек набирает ник по памяти, как придётся.
+	// Проверяется и кириллица — lower() зависит от локали базы, и в локали C она бы не сворачивалась.
+	for _, query := range []string{"majomp", "MAJOMP", "MaJoMp", "Salat Majompski", "SALAT MAJOMPSKI"} {
+		players, _, err := api.SearchPlayers(ctx, query, 10)
+		if err != nil {
+			t.Fatalf("поиск %q: %v", query, err)
+		}
+		if len(players) != 1 {
+			t.Errorf("поиск %q: найдено %d, ожидался 1", query, len(players))
+		}
+	}
+
 	// Поиск по старому нику находит игрока с новым текущим ником.
 	found, fuzzy, err := api.SearchPlayers(ctx, "majomp", 10)
 	if err != nil {
@@ -87,6 +116,15 @@ func TestAPIRepo_endToEnd(t *testing.T) {
 	if len(typo) != 1 || typo[0].PlayerID != found[0].PlayerID || !fuzzy {
 		t.Errorf("fuzzy search: fuzzy=%v %+v", fuzzy, typo)
 	}
+	// Нечёткий поиск тоже не различает регистр.
+	upperTypo, fuzzyUpper, err := api.SearchPlayers(ctx, "SALTA MAJOMPKSI", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(upperTypo) != 1 || !fuzzyUpper {
+		t.Errorf("нечёткий поиск в верхнем регистре: fuzzy=%v %+v", fuzzyUpper, upperTypo)
+	}
+
 	// Совсем чужая строка не должна находить никого даже в нечётком режиме.
 	none, _, err := api.SearchPlayers(ctx, "zzzqqqxxx", 10)
 	if err != nil {

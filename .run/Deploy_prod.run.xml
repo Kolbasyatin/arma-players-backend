@@ -1,0 +1,20 @@
+<component name="ProjectRunConfigurationManager">
+  <!-- Кнопка деплоя в IDE: дёргает workflow_dispatch через GitHub CLI, браузер не нужен.
+       Требует установленного gh (пакет github-cli) и однократного `gh auth login`.
+       Для откака поменять tag на sha-<коммит>. -->
+  <configuration default="false" name="Deploy prod" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="gh workflow run deploy.yaml -f tag=latest &amp;&amp; sleep 3 &amp;&amp; gh run watch --exit-status" />
+    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+    <option name="SCRIPT_PATH" value="" />
+    <option name="SCRIPT_OPTIONS" value="" />
+    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="INDEPENDENT_INTERPRETER_PATH" value="true" />
+    <option name="INTERPRETER_PATH" value="/bin/bash" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
+    <option name="EXECUTE_SCRIPT_FILE" value="false" />
+    <envs />
+    <method v="2" />
+  </configuration>
+</component>

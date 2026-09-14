@@ -34,7 +34,12 @@ func (r *APIRepo) Events(ctx context.Context, q httpapi.EventsQuery) ([]httpapi.
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.id, e.event_type, e.occurred_at, e.player_id, p.bohemia_user_id::text,
-		       COALESCE(ps.nickname, qs.nickname, p.current_nickname, ''),
+		       -- Ник НА МОМЕНТ события. Для входов и выходов он лежит в сессии. У смены ника сессии
+		       -- нет, и current_nickname здесь уже НОВЫЙ — тогда сообщение получалось вида
+		       -- «Новое имя теперь Новое имя». Старое написание есть только в payload события.
+		       COALESCE(
+		           CASE WHEN e.event_type = 'PLAYER_NICKNAME_CHANGED' THEN e.payload->>'old' END,
+		           ps.nickname, qs.nickname, p.current_nickname, ''),
 		       e.server_id, COALESCE(s.display_name, ''), e.session_id,
 		       CASE
 		         WHEN e.event_type = 'PLAYER_LEFT_SERVER' AND ps.id IS NOT NULL THEN EXTRACT(EPOCH FROM COALESCE(ps.ended_at, ps.last_seen_at) - ps.first_seen_at)::bigint

@@ -12,6 +12,11 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/observer /observer
 COPY --from=build /out/probe /probe
+# Конфигурация развёртывания едет ВНУТРИ образа: compose.yaml, systemd-юнит, шаблон .env.
+# Сервер достаёт их из образа (docker create + docker cp), поэтому git-клона на проде не нужно,
+# а compose гарантированно соответствует ровно этому образу — не вершине ветки, как было бы
+# при git pull. Настоящий deploy/.env с секретами в образ не попадает: он в .dockerignore.
+COPY deploy/ /deploy/
 USER nonroot
 EXPOSE 8081
 ENTRYPOINT ["/observer"]

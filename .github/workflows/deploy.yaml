@@ -1,0 +1,135 @@
+# Деплой на прод по кнопке: Actions → deploy → Run workflow.
+#
+# Ничего не собирает: образ уже лежит в GHCR после ci.yaml. Задача только в том, чтобы сервер
+# забрал нужный тег, перезапустил стек и ДОКАЗАЛ, что сервис поднялся — иначе зелёная галочка
+# означала бы «команда отправлена», а не «выкачено».
+#
+# Секреты репозитория (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST         адрес сервера
+#   DEPLOY_USER         пользователь для ssh
+#   DEPLOY_SSH_KEY      приватный ключ этого пользователя (весь файл, включая BEGIN/END)
+#   DEPLOY_KNOWN_HOSTS  вывод `ssh-keyscan -H <адрес>` — чтобы ключ хоста проверялся, а не принимался на веру
+# Переменная репозитория (Variables, не Secrets):
+#   DEPLOY_PATH         каталог с deploy/ на сервере, по умолчанию /opt/teamspeakbot/arma-players
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег образа: latest или sha-<коммит> для откага"
+        type: string
+        default: latest
+        required: true
+
+# Два деплоя одновременно — это гонка за один и тот же стек. Второй ждёт первого.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Проверить, что образ с таким тегом существует
+        # Дешевле узнать об опечатке в теге здесь, чем на сервере после остановки сервиса.
+        run: |
+          set -euo pipefail
+          token=$(curl -fsSL -u "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${{ github.repository }}:pull" | jq -r .token)
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/${{ github.repository }}/manifests/${{ inputs.tag }}")
+          if [ "$code" != "200" ]; then
+            echo "Образа с тегом '${{ inputs.tag }}' в GHCR нет (HTTP $code)"
+            exit 1
+          fi
+
+      - name: Подготовить ssh
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Выкатить и убедиться, что сервис жив
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/teamspeakbot/arma-players' }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "DEPLOY_PATH='$DEPLOY_PATH' TAG='$TAG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          IMAGE="ghcr.io/kolbasyatin/arma-players-backend:$TAG"
+
+          # Конфигурация развёртывания достаётся ИЗ ОБРАЗА: git-клона на прод-сервере нет.
+          # Так compose соответствует ровно выкатываемому образу, а не вершине ветки —
+          # и откат на старый тег возвращает и старый compose вместе с ним.
+          docker pull --quiet "$IMAGE"
+
+          # Контейнер только создаётся, не запускается: docker cp работает и так, а образ
+          # distroless и оболочки внутри не имеет.
+          cid=$(docker create "$IMAGE")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          rm -rf deploy.new && mkdir deploy.new
+          docker cp "$cid:/deploy/." deploy.new/
+
+          # Секреты остаются на машине: в образе лежит только шаблон .env.example.
+          if [ ! -f deploy/.env ]; then
+            echo "На сервере нет $DEPLOY_PATH/deploy/.env — первичная настройка не выполнена."
+            echo "См. раздел «Первый запуск» в README."
+            exit 1
+          fi
+          cp deploy/.env deploy.new/.env
+
+          # Новый compose проверяется ДО подмены: битый файл иначе оставил бы сервис лежать.
+          docker compose -f deploy.new/compose.yaml --env-file deploy.new/.env config --quiet
+
+          # Юнит менять сами не будем — это вне SSH-прав деплоя. Но расхождение показать обязаны,
+          # иначе правка юнита тихо не применится.
+          if [ -f /etc/systemd/system/armaplayers-observer.service ] \
+             && ! cmp -s deploy.new/armaplayers-observer.service /etc/systemd/system/armaplayers-observer.service; then
+            echo "ВНИМАНИЕ: systemd-юнит в образе отличается от установленного."
+            echo "Применить: sudo cp $DEPLOY_PATH/deploy/armaplayers-observer.service /etc/systemd/system/ && sudo systemctl daemon-reload"
+          fi
+
+          # Подмена одним движением: каталог целиком, чтобы не остаться с половиной новой конфигурации.
+          rm -rf deploy.prev && mv deploy deploy.prev && mv deploy.new deploy
+          rm -rf deploy.prev
+
+          # Тег записывается в deploy/.env, а не передаётся мимо: юнит читает именно этот файл,
+          # и после деплоя файл честно показывает, что запущено. Заодно это и есть откат:
+          # выкатил sha-<коммит>, файл про это знает.
+          if grep -q '^OBSERVER_TAG=' deploy/.env; then
+            sed -i "s|^OBSERVER_TAG=.*|OBSERVER_TAG=$TAG|" deploy/.env
+          else
+            printf '\nOBSERVER_TAG=%s\n' "$TAG" >> deploy/.env
+          fi
+
+          docker compose -f deploy/compose.yaml --env-file deploy/.env pull --quiet
+          sudo systemctl restart armaplayers-observer
+
+          # Проверка живости: сервис сам применяет миграции при старте, поэтому «поднялся»
+          # означает и «схема в порядке». Ждём до минуты — миграция на большой таблице не мгновенна.
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:8081/health >/dev/null; then
+              echo "health: ok (попытка $attempt)"
+              curl -fsS --max-time 5 http://127.0.0.1:8081/observation-status \
+                | head -c 400 | sed 's/$/\n/'
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Сервис не ответил на /health за минуту. Логи:"
+          docker logs --tail 40 armaplayers-observer 2>&1 || true
+          exit 1
+          REMOTE

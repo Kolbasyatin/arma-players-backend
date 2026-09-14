@@ -135,7 +135,7 @@ Salat Majompski — последние визиты:
 | `PLAYER_ENTERED_QUEUE` | 🕒 **Salat Majompski** встал в очередь на **[OG9] Old Guys 9** |
 | `PLAYER_LEFT_QUEUE`, `payload.result = JOINED_SERVER` | 🟢 **Salat Majompski** вошёл на **[OG9] Old Guys 9** после 10 мин в очереди |
 | `PLAYER_LEFT_QUEUE`, `payload.result = LEFT_QUEUE` | ⚪ **Salat Majompski** ушёл из очереди **[OG9] Old Guys 9**, прождав 8 мин |
-| `PLAYER_NICKNAME_CHANGED` | ✏️ **Salat Majompski** теперь **Salat** |
+| `PLAYER_NICKNAME_CHANGED` | ✏️ **Salat Majompski** теперь **Salat** — оба имени берутся из `payload` (`old`/`new`), не из `nickname`: так сообщение корректно и со старой версией сервиса |
 
 Правила:
 - `duration_seconds` и `payload.waited_seconds` форматировать по-человечески: «8 мин», «1 ч 12 мин», «2 дн».
