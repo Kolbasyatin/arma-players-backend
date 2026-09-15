@@ -97,7 +97,7 @@ func rooms(ids ...string) []bohemia.Room {
 func TestScanner_success(t *testing.T) {
 	src := &fakeSource{pages: []bohemia.SearchRoomsResponse{{Rooms: rooms("a", "b")}, {Rooms: rooms("c")}}}
 	repo := &fakeRepo{deactivated: 4}
-	s := catalog.NewScanner(src, &fakeTokens{}, repo, 2, time.Hour, catalog.TrackingRules{}, nil)
+	s := catalog.NewScanner(src, &fakeTokens{}, repo, 2, time.Hour, true, catalog.TrackingRules{}, nil)
 
 	res, err := s.RunLobbyScan(context.Background())
 	if err != nil {
@@ -115,7 +115,7 @@ func TestScanner_authErrorInvalidatesToken(t *testing.T) {
 	src := &fakeSource{err: &bohemia.Error{Kind: bohemia.KindAuthError, Op: "searchRooms", HTTPStatus: 401}}
 	tokens := &fakeTokens{}
 	repo := &fakeRepo{}
-	s := catalog.NewScanner(src, tokens, repo, 2, time.Hour, catalog.TrackingRules{}, nil)
+	s := catalog.NewScanner(src, tokens, repo, 2, time.Hour, true, catalog.TrackingRules{}, nil)
 
 	_, err := s.RunLobbyScan(context.Background())
 	if err == nil {
@@ -131,7 +131,7 @@ func TestScanner_authErrorInvalidatesToken(t *testing.T) {
 
 func TestScanner_tokenUnavailable(t *testing.T) {
 	repo := &fakeRepo{}
-	s := catalog.NewScanner(&fakeSource{}, &fakeTokens{err: token.ErrNotAvailable}, repo, 2, time.Hour, catalog.TrackingRules{}, nil)
+	s := catalog.NewScanner(&fakeSource{}, &fakeTokens{err: token.ErrNotAvailable}, repo, 2, time.Hour, true, catalog.TrackingRules{}, nil)
 
 	_, err := s.RunLobbyScan(context.Background())
 	if !errors.Is(err, token.ErrNotAvailable) {
@@ -145,7 +145,7 @@ func TestScanner_tokenUnavailable(t *testing.T) {
 func TestScanner_RunLoop_scansImmediatelyWhenNeverScanned(t *testing.T) {
 	src := &fakeSource{pages: []bohemia.SearchRoomsResponse{{Rooms: rooms("a")}}}
 	repo := &fakeRepo{}
-	s := catalog.NewScanner(src, &fakeTokens{}, repo, 2, time.Hour, catalog.TrackingRules{}, nil)
+	s := catalog.NewScanner(src, &fakeTokens{}, repo, 2, time.Hour, true, catalog.TrackingRules{}, nil)
 
 	// Интервал сутки: после первого скана цикл уснёт до следующего — отменяем ctx и ждём выхода.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -162,7 +162,7 @@ func TestScanner_RunLoop_scansImmediatelyWhenNeverScanned(t *testing.T) {
 
 func TestScanner_RunLoop_waitsWhenRecentlyScanned(t *testing.T) {
 	repo := &fakeRepo{lastScan: time.Now()}
-	s := catalog.NewScanner(&fakeSource{}, &fakeTokens{}, repo, 2, time.Hour, catalog.TrackingRules{}, nil)
+	s := catalog.NewScanner(&fakeSource{}, &fakeTokens{}, repo, 2, time.Hour, true, catalog.TrackingRules{}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

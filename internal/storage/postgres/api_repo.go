@@ -88,7 +88,11 @@ func (r *APIRepo) EventsHead(ctx context.Context) (int64, error) {
 }
 
 const playerSummarySQL = `
-	SELECT p.id, p.bohemia_user_id::text, p.current_nickname, p.first_seen_at, p.last_seen_at,
+	SELECT p.id, p.bohemia_user_id::text, p.current_nickname, p.first_seen_at,
+	       -- «Последний раз видели» берётся из сессии, а не из player_identity: служебная отметка
+	       -- там обновляется редко (раз в час), чтобы не переписывать строку на каждый опрос,
+	       -- а сессия обновляется каждым опросом по своей прямой надобности и потому точна.
+	       GREATEST(p.last_seen_at, l.seen) AS last_seen_at,
 	       COALESCE((SELECT array_agg(a.nickname ORDER BY a.last_seen_at DESC) FROM player_alias a WHERE a.player_id = p.id), '{}'),
 	       COALESCE((SELECT json_agg(json_build_object('type', pl.game_client_type, 'id', pl.platform_user_id, 'last_seen_at', pl.last_seen_at) ORDER BY pl.last_seen_at DESC)
 	                 FROM player_platform_identity pl WHERE pl.player_id = p.id), '[]'),
@@ -101,7 +105,7 @@ const playerSummarySQL = `
 		FROM player_server_session ss JOIN server sv ON sv.id = ss.server_id JOIN server c ON c.id = COALESCE(sv.merged_into_server_id, sv.id)
 		WHERE ss.player_id = p.id AND ss.ended_at IS NULL ORDER BY ss.last_seen_at DESC LIMIT 1) o ON true
 	LEFT JOIN LATERAL (
-		SELECT c.id, c.display_name AS name, COALESCE(c.current_host_address,'') AS host
+		SELECT c.id, c.display_name AS name, COALESCE(c.current_host_address,'') AS host, ss.last_seen_at AS seen
 		FROM player_server_session ss JOIN server sv ON sv.id = ss.server_id JOIN server c ON c.id = COALESCE(sv.merged_into_server_id, sv.id)
 		WHERE ss.player_id = p.id ORDER BY ss.last_seen_at DESC LIMIT 1) l ON true`
 

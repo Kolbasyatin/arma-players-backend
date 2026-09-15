@@ -55,6 +55,9 @@ type Config struct {
 	Interval     time.Duration // между обходами; default 1m
 	Concurrency  int           // одновременно опрашиваемых серверов; default 4
 	RawRetention time.Duration // срок хранения сырых ответов; default 14d
+	// StoreRaw — сохранять ли сырые ответы минутного опроса (RAW_STORE=all). По умолчанию нет:
+	// это самый объёмный источник данных в базе, а всё его содержимое и так разложено по таблицам.
+	StoreRaw bool
 }
 
 func (c Config) withDefaults() Config {
@@ -173,7 +176,11 @@ func (t *Tracker) pollServer(ctx context.Context, srv Server) {
 	roomID := room.ID
 	if found {
 		observedAt := t.now()
-		if err := t.repo.SaveRoomObservation(ctx, srv.ID, room, observedAt, search.Raw, observedAt.Add(t.cfg.RawRetention)); err != nil {
+		searchRaw := search.Raw
+		if !t.cfg.StoreRaw {
+			searchRaw = nil
+		}
+		if err := t.repo.SaveRoomObservation(ctx, srv.ID, room, observedAt, searchRaw, observedAt.Add(t.cfg.RawRetention)); err != nil {
 			t.log.Error("tracking: save room observation", "server_id", srv.ID, "err", err)
 		}
 		t.record(ctx, srv.ID, observation.PollResolveRoom, started, room.ID, nil, &room)
@@ -200,8 +207,10 @@ func (t *Tracker) pollServer(ctx context.Context, srv Server) {
 		return
 	}
 	observedAt := t.now()
-	if _, err := t.repo.SaveRawPayload(ctx, "LIST_PLAYERS", observedAt, observedAt.Add(t.cfg.RawRetention), list.Raw); err != nil {
-		t.log.Error("tracking: save raw listPlayers", "server_id", srv.ID, "err", err)
+	if t.cfg.StoreRaw {
+		if _, err := t.repo.SaveRawPayload(ctx, "LIST_PLAYERS", observedAt, observedAt.Add(t.cfg.RawRetention), list.Raw); err != nil {
+			t.log.Error("tracking: save raw listPlayers", "server_id", srv.ID, "err", err)
+		}
 	}
 
 	res, err := t.presence.Apply(ctx, presence.Observation{

@@ -52,11 +52,16 @@ func (r *TrackingRepo) SaveRoomObservation(ctx context.Context, serverID int64, 
 	}
 	defer tx.Rollback(ctx)
 
-	var rawID int64
-	if err := tx.QueryRow(ctx,
-		`INSERT INTO raw_payload (kind, fetched_at, expires_at, payload) VALUES ('SEARCH_ROOMS', $1, $2, $3) RETURNING id`,
-		observedAt, rawExpiresAt, raw).Scan(&rawID); err != nil {
-		return fmt.Errorf("insert raw_payload: %w", err)
+	// Пустое сырьё означает «хранение выключено» (RAW_STORE): снимок просто не ссылается на raw_payload.
+	var rawID *int64
+	if len(raw) > 0 {
+		var id int64
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO raw_payload (kind, fetched_at, expires_at, payload) VALUES ('SEARCH_ROOMS', $1, $2, $3) RETURNING id`,
+			observedAt, rawExpiresAt, raw).Scan(&id); err != nil {
+			return fmt.Errorf("insert raw_payload: %w", err)
+		}
+		rawID = &id
 	}
 	var currentHash *string
 	if err := tx.QueryRow(ctx, `
@@ -76,7 +81,7 @@ func (r *TrackingRepo) SaveRoomObservation(ctx context.Context, serverID int64, 
 	if err := upsertIdentityKeys(ctx, tx, serverID, &room, observedAt); err != nil {
 		return fmt.Errorf("identity keys: %w", err)
 	}
-	if err := insertObservation(ctx, tx, serverID, &room, observedAt, sourceTrackingPoll, &rawID); err != nil {
+	if err := insertObservation(ctx, tx, serverID, &room, observedAt, sourceTrackingPoll, rawID); err != nil {
 		return fmt.Errorf("observation: %w", err)
 	}
 	return tx.Commit(ctx)

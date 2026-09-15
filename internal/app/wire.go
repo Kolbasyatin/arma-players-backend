@@ -42,7 +42,9 @@ func NewServices(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) Servic
 	client := NewBohemiaClient(cfg.Bohemia)
 	tokens := NewTokenProvider(cfg)
 
+	raw := cfg.Raw()
 	scanner := catalog.NewScanner(client, tokens, postgres.NewCatalogRepo(pool), cfg.LobbyPageSize, cfg.RawRetention,
+		raw == config.RawStoreScan || raw == config.RawStoreAll,
 		catalog.TrackingRules{
 			ManualHosts:    cfg.TrackHostAddresses,
 			AutoMinPlayers: cfg.TrackAutoMinPlayers,
@@ -58,6 +60,7 @@ func NewServices(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) Servic
 		Interval:     cfg.PollInterval,
 		Concurrency:  cfg.PollConcurrency,
 		RawRetention: cfg.RawRetention,
+		StoreRaw:     raw == config.RawStoreAll,
 	}, log)
 
 	return Services{Scanner: scanner, Tracker: tracker}

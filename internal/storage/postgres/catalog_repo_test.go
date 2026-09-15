@@ -213,11 +213,25 @@ func TestCatalogRepo_DeleteExpiredRawPayloads(t *testing.T) {
 	if n != 1 {
 		t.Errorf("deleted: want 1, got %d", n)
 	}
-	// Снимок, ссылавшийся на удалённый payload, остался, ссылка обнулилась (ON DELETE SET NULL).
-	var orphaned int
-	pool.QueryRow(ctx, `SELECT count(*) FROM server_observation WHERE raw_payload_id IS NULL`).Scan(&orphaned)
-	if orphaned != 1 {
-		t.Errorf("observations with NULL raw_payload_id: want 1, got %d", orphaned)
+	// Снимки переживают удаление сырья и не переписываются: внешнего ключа больше нет,
+	// поэтому чистка не трогает server_observation вообще. Ссылка на удалённый payload
+	// остаётся висеть — это ожидаемое состояние, сырьё живёт меньше снимков.
+	var dangling int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM server_observation o
+		WHERE o.raw_payload_id IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM raw_payload r WHERE r.id = o.raw_payload_id)`).Scan(&dangling); err != nil {
+		t.Fatal(err)
+	}
+	if dangling == 0 {
+		t.Error("ожидали снимки с ссылкой на удалённое сырьё, не нашли ни одного")
+	}
+	var nulled int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM server_observation WHERE raw_payload_id IS NULL`).Scan(&nulled); err != nil {
+		t.Fatal(err)
+	}
+	if nulled != 0 {
+		t.Errorf("чистка сырья не должна обновлять снимки, а обнулила %d ссылок", nulled)
 	}
 }
 
@@ -347,5 +361,72 @@ func TestCatalogRepo_modsPersisted(t *testing.T) {
 	pool.QueryRow(ctx, `SELECT mod_count, supported_game_client_types, queue_type, hosted_scenario_mod_id FROM server_observation WHERE server_id = 1 ORDER BY id DESC LIMIT 1`).Scan(&modCount, &clientTypes, &queueType, &hosted)
 	if modCount != 3 || len(clientTypes) != 3 || queueType != "REGULAR" || hosted == "" {
 		t.Errorf("observation extra fields: mods=%d types=%v queue=%q hosted=%q", modCount, clientTypes, queueType, hosted)
+	}
+}
+
+func TestCatalogRepo_rawDisabled(t *testing.T) {
+	// RAW_STORE=off: сырьё не сохраняется вовсе, но снимки пишутся как обычно. Всё содержимое
+	// ответа и так разложено по колонкам, так что терять нечего — а на проде именно эта таблица
+	// занимала больше половины базы.
+	pool := testPool(t)
+	repo := postgres.NewCatalogRepo(pool)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if _, err := repo.SaveLobbyPage(ctx, now, loadRooms(t), nil, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	var raws, observations int
+	var rawID *int64
+	pool.QueryRow(ctx, `SELECT count(*) FROM raw_payload`).Scan(&raws)
+	pool.QueryRow(ctx, `SELECT count(*) FROM server_observation`).Scan(&observations)
+	pool.QueryRow(ctx, `SELECT raw_payload_id FROM server_observation LIMIT 1`).Scan(&rawID)
+
+	if raws != 0 {
+		t.Errorf("сырьё не должно сохраняться: строк %d", raws)
+	}
+	if observations != 1 || rawID != nil {
+		t.Errorf("снимок должен быть записан без ссылки на сырьё: observations=%d rawID=%v", observations, rawID)
+	}
+}
+
+func TestCatalogRepo_deleteExpiredRawInBatches(t *testing.T) {
+	// Удаление идёт пачками: одна огромная транзакция на проде не доживала до конца — рестарт
+	// откатывал её целиком, и чистка не продвигалась никогда.
+	pool := testPool(t)
+	repo := postgres.NewCatalogRepo(pool)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Больше одной пачки (5000), чтобы проверить именно цикл.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO raw_payload (kind, fetched_at, expires_at, payload)
+		SELECT 'LIST_PLAYERS', $1, $1, '{"x":1}'::jsonb FROM generate_series(1, 12000)`, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO raw_payload (kind, fetched_at, expires_at, payload)
+		VALUES ('LIST_PLAYERS', $1, $2, '{"fresh":true}'::jsonb)`, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := repo.DeleteExpiredRawPayloads(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 12000 {
+		t.Errorf("удалено %d, ожидалось 12000", deleted)
+	}
+
+	var left int
+	pool.QueryRow(ctx, `SELECT count(*) FROM raw_payload`).Scan(&left)
+	if left != 1 {
+		t.Errorf("непросроченное трогать нельзя: осталось %d строк", left)
+	}
+
+	// Повторный вызов на пустом множестве — не ошибка и не бесконечный цикл.
+	if n, err := repo.DeleteExpiredRawPayloads(ctx, now); err != nil || n != 0 {
+		t.Errorf("повторный вызов: %d, %v", n, err)
 	}
 }

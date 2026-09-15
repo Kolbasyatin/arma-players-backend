@@ -47,6 +47,26 @@ type presenceTx struct {
 
 // UpsertPlayer — идентичность, платформенный маппинг и алиас одним заходом.
 // Возвращает предыдущий ник, чтобы presence мог породить PLAYER_NICKNAME_CHANGED.
+// touchInterval — как часто разрешено обновлять «служебные» поля игрока: время последнего
+// появления и счётчики наблюдений в player_identity, player_alias, player_platform_identity.
+//
+// ЗАЧЕМ ЭТО ВООБЩЕ ЕСТЬ. Строк в этих таблицах ровно столько, сколько нужно: одна на игрока,
+// одна на его ник, одна на платформенный аккаунт. Но раньше каждое наблюдение переписывало их
+// заново, и на 150 тысячах строк накопилось 45 миллионов обновлений на таблицу. Postgres
+// при обновлении пишет НОВУЮ версию строки, а старую помечает мёртвой, поэтому строка
+// в 100 байт распухла до 4 килобайт, а таблицы до гигабайта каждая.
+//
+// Точность при этом не теряется: «когда игрока видели в последний раз» с точностью до опроса
+// лежит в player_server_session, которая обновляется каждый poll по своей прямой надобности,
+// и API берёт время оттуда. Здесь же хранится грубая отметка — с точностью до этого интервала.
+const touchInterval = time.Hour
+
+// UpsertPlayer заводит игрока, его ник и платформенный аккаунт, если их ещё нет.
+//
+// Существующие строки трогаются ТОЛЬКО когда что-то изменилось по сути (сменился текущий ник)
+// или когда отметка времени устарела больше чем на touchInterval. Условие стоит в самом
+// ON CONFLICT: если оно ложно, Postgres обновление не выполняет вовсе, а не пишет ту же строку
+// заново — это и есть разница между семью миллионами обновлений в сутки и двумястами тысячами.
 func (t *presenceTx) UpsertPlayer(ctx context.Context, p bohemia.Player, seenAt time.Time) (presence.PlayerRef, error) {
 	var ref presence.PlayerRef
 	// xmax = 0 у только что вставленной строки — стандартный способ отличить INSERT от UPDATE в upsert.
@@ -57,9 +77,20 @@ func (t *presenceTx) UpsertPlayer(ctx context.Context, p bohemia.Player, seenAt 
 		   SET current_nickname = EXCLUDED.current_nickname,
 		       last_seen_at     = GREATEST(player_identity.last_seen_at, EXCLUDED.last_seen_at),
 		       updated_at       = now()
+		   WHERE player_identity.current_nickname <> EXCLUDED.current_nickname
+		      OR player_identity.last_seen_at < EXCLUDED.last_seen_at - $4::interval
 		RETURNING id, (xmax = 0) AS inserted`,
-		p.UserID, p.Username, seenAt).Scan(&ref.PlayerID, &ref.IsNew)
-	if err != nil {
+		p.UserID, p.Username, seenAt, touchInterval).Scan(&ref.PlayerID, &ref.IsNew)
+
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Условие DO UPDATE не выполнилось — строка существует и трогать её незачем.
+		// RETURNING в этом случае не отдаёт ничего, поэтому id читаем отдельно.
+		if err := t.tx.QueryRow(ctx,
+			`SELECT id FROM player_identity WHERE bohemia_user_id = $1`, p.UserID).Scan(&ref.PlayerID); err != nil {
+			return ref, fmt.Errorf("player_identity id: %w", err)
+		}
+	case err != nil:
 		return ref, fmt.Errorf("upsert player_identity: %w", err)
 	}
 
@@ -74,20 +105,26 @@ func (t *presenceTx) UpsertPlayer(ctx context.Context, p bohemia.Player, seenAt 
 	}
 
 	batch := &pgx.Batch{}
+	// observation_count теперь считает не опросы, а интервалы присутствия: раз в touchInterval.
+	// Как метрика «насколько часто игрок ходит под этим ником» она от этого не испортилась,
+	// а обновлений стало на два порядка меньше.
 	batch.Queue(`
 		INSERT INTO player_alias (player_id, nickname, first_seen_at, last_seen_at)
 		VALUES ($1, $2, $3, $3)
 		ON CONFLICT (player_id, nickname) DO UPDATE
 		   SET last_seen_at = GREATEST(player_alias.last_seen_at, EXCLUDED.last_seen_at),
-		       observation_count = player_alias.observation_count + 1`, ref.PlayerID, p.Username, seenAt)
+		       observation_count = player_alias.observation_count + 1
+		   WHERE player_alias.last_seen_at < EXCLUDED.last_seen_at - $4::interval`,
+		ref.PlayerID, p.Username, seenAt, touchInterval)
 	if p.PlatformUserID != "" {
 		batch.Queue(`
 			INSERT INTO player_platform_identity (player_id, game_client_type, platform_user_id, first_seen_at, last_seen_at)
 			VALUES ($1, $2, $3, $4, $4)
 			ON CONFLICT (player_id, game_client_type, platform_user_id) DO UPDATE
 			   SET last_seen_at = GREATEST(player_platform_identity.last_seen_at, EXCLUDED.last_seen_at),
-			       observation_count = player_platform_identity.observation_count + 1`,
-			ref.PlayerID, p.GameClientType, p.PlatformUserID, seenAt)
+			       observation_count = player_platform_identity.observation_count + 1
+			   WHERE player_platform_identity.last_seen_at < EXCLUDED.last_seen_at - $5::interval`,
+			ref.PlayerID, p.GameClientType, p.PlatformUserID, seenAt, touchInterval)
 	}
 	if err := t.tx.SendBatch(ctx, batch).Close(); err != nil {
 		return ref, fmt.Errorf("alias/platform upsert: %w", err)

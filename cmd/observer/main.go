@@ -91,7 +91,7 @@ func run() error {
 	})
 
 	slog.Info("observer started", "http_addr", cfg.HTTPAddr, "api_enabled", cfg.APIToken != "", "lobby_scan_interval", cfg.LobbyScanInterval.String(),
-		"poll_interval", cfg.PollInterval.String(), "manual_tracked", len(cfg.TrackHostAddresses),
+		"poll_interval", cfg.PollInterval.String(), "raw_store", string(cfg.Raw()), "manual_tracked", len(cfg.TrackHostAddresses),
 		"auto_min_players", cfg.TrackAutoMinPlayers, "auto_max_servers", cfg.TrackAutoMaxServers)
 
 	err = g.Wait()

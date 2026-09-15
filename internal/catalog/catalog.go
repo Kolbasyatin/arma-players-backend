@@ -69,16 +69,19 @@ type Scanner struct {
 	repo         Repository
 	pageSize     int
 	rawRetention time.Duration
+	storeRaw     bool
 	rules        TrackingRules
 	log          *slog.Logger
 	now          func() time.Time
 }
 
-func NewScanner(src Source, tokens TokenProvider, repo Repository, pageSize int, rawRetention time.Duration, rules TrackingRules, log *slog.Logger) *Scanner {
+// storeRaw — сохранять ли сырые ответы скана (RAW_STORE=scan|all). При false в репозиторий
+// уезжает пустое сырьё, и таблица raw_payload не растёт.
+func NewScanner(src Source, tokens TokenProvider, repo Repository, pageSize int, rawRetention time.Duration, storeRaw bool, rules TrackingRules, log *slog.Logger) *Scanner {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Scanner{src: src, tokens: tokens, repo: repo, pageSize: pageSize, rawRetention: rawRetention, rules: rules, log: log, now: time.Now}
+	return &Scanner{src: src, tokens: tokens, repo: repo, pageSize: pageSize, rawRetention: rawRetention, storeRaw: storeRaw, rules: rules, log: log, now: time.Now}
 }
 
 // ScanResult — итог полного скана.
@@ -131,7 +134,11 @@ func (s *Scanner) scan(ctx context.Context, started time.Time, res *ScanResult) 
 
 	err = s.src.SearchAllRooms(ctx, accessToken, s.pageSize, func(page bohemia.SearchRoomsResponse) error {
 		observedAt := s.now()
-		stats, err := s.repo.SaveLobbyPage(ctx, observedAt, page.Rooms, page.Raw, observedAt.Add(s.rawRetention))
+		raw := page.Raw
+		if !s.storeRaw {
+			raw = nil
+		}
+		stats, err := s.repo.SaveLobbyPage(ctx, observedAt, page.Rooms, raw, observedAt.Add(s.rawRetention))
 		if err != nil {
 			return fmt.Errorf("lobby scan: save page from=%d: %w", page.SearchFrom, err)
 		}

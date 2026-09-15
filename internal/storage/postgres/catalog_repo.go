@@ -37,12 +37,17 @@ func (r *CatalogRepo) SaveLobbyPage(ctx context.Context, observedAt time.Time, r
 	}
 	defer tx.Rollback(ctx) // no-op после успешного Commit
 
-	var rawID int64
-	err = tx.QueryRow(ctx,
-		`INSERT INTO raw_payload (kind, fetched_at, expires_at, payload) VALUES ('SEARCH_ROOMS', $1, $2, $3) RETURNING id`,
-		observedAt, rawExpiresAt, raw).Scan(&rawID)
-	if err != nil {
-		return stats, fmt.Errorf("insert raw_payload: %w", err)
+	// Пустое сырьё означает «хранение выключено» (RAW_STORE=off): снимки тогда просто не ссылаются
+	// на raw_payload. Всё содержимое ответа и так разложено по колонкам, ничего не теряется.
+	var rawID *int64
+	if len(raw) > 0 {
+		var id int64
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO raw_payload (kind, fetched_at, expires_at, payload) VALUES ('SEARCH_ROOMS', $1, $2, $3) RETURNING id`,
+			observedAt, rawExpiresAt, raw).Scan(&id); err != nil {
+			return stats, fmt.Errorf("insert raw_payload: %w", err)
+		}
+		rawID = &id
 	}
 
 	for i := range rooms {
@@ -65,7 +70,7 @@ func (r *CatalogRepo) SaveLobbyPage(ctx context.Context, observedAt time.Time, r
 		if _, err := syncServerMods(ctx, tx, serverID, modHash, room.Mods, observedAt); err != nil {
 			return stats, fmt.Errorf("room %s: mods: %w", room.ID, err)
 		}
-		if err := insertObservation(ctx, tx, serverID, room, observedAt, sourceLobbyScan, &rawID); err != nil {
+		if err := insertObservation(ctx, tx, serverID, room, observedAt, sourceLobbyScan, rawID); err != nil {
 			return stats, fmt.Errorf("room %s: observation: %w", room.ID, err)
 		}
 		stats.Rooms++
@@ -330,12 +335,41 @@ func (r *CatalogRepo) ApplyTrackingRules(ctx context.Context, rules catalog.Trac
 	return st, tx.Commit(ctx)
 }
 
+// rawDeleteBatch — сколько строк удалять за одну транзакцию.
+//
+// Пачками, а не одним DELETE на всё просроченное: на проде накопилось 468 тысяч строк с 2,5 ГБ
+// полезной нагрузки, и одна транзакция такого размера идёт минутами. Любой рестарт сервиса
+// посреди неё откатывал работу целиком, и чистка не продвигалась НИКОГДА, только росла.
+// Короткие транзакции переживают рестарт: удалённое остаётся удалённым.
+const rawDeleteBatch = 5_000
+
+// DeleteExpiredRawPayloads удаляет просроченные сырые ответы, пока они есть, пачками.
+// Возвращает общее число удалённых. Отмена контекста (остановка сервиса) прекращает работу
+// между пачками — уже удалённое при этом сохраняется.
 func (r *CatalogRepo) DeleteExpiredRawPayloads(ctx context.Context, now time.Time) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM raw_payload WHERE expires_at < $1`, now)
-	if err != nil {
-		return 0, fmt.Errorf("delete expired raw_payload: %w", err)
+	var total int64
+
+	for {
+		// ctid — физический адрес строки, самый дешёвый способ адресовать выбранную пачку.
+		tag, err := r.pool.Exec(ctx, `
+			DELETE FROM raw_payload
+			WHERE ctid IN (SELECT ctid FROM raw_payload WHERE expires_at < $1 LIMIT $2)`, now, rawDeleteBatch)
+		if err != nil {
+			// Уже удалённое не теряется: каждая пачка — своя транзакция.
+			return total, fmt.Errorf("delete expired raw_payload: %w", err)
+		}
+
+		deleted := tag.RowsAffected()
+		total += deleted
+
+		if deleted < rawDeleteBatch {
+			return total, nil
+		}
+
+		if err := ctx.Err(); err != nil {
+			return total, nil
+		}
 	}
-	return tag.RowsAffected(), nil
 }
 
 // MergeDuplicateRooms схлопывает серверы, у которых один и тот же ROOM_ID оказался у нескольких

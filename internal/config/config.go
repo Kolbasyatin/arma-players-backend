@@ -38,8 +38,14 @@ type Config struct {
 	PresenceAbsentConfirmations int           `env:"PRESENCE_ABSENT_CONFIRMATIONS" envDefault:"2"`
 	PresenceMaxGap              time.Duration `env:"PRESENCE_MAX_GAP" envDefault:"15m"`
 
-	// Сырые ответы Bohemia (AGENTS §12): срок хранения и период чистки.
-	RawRetention      time.Duration `env:"RAW_RETENTION" envDefault:"336h"`
+	// Сырые ответы Bohemia (AGENTS §12). Всё содержимое ответов разложено по таблицам, поэтому
+	// сырьё нужно только для отладки формата — и по умолчанию НЕ хранится: на проде оно занимало
+	// 5,7 ГБ из 11, больше всех остальных данных вместе взятых.
+	//   off  — не хранить вовсе (по умолчанию);
+	//   scan — только ответы суточного скана лобби (~16 МБ на скан), их хватает для изучения формата;
+	//   all  — плюс ответы минутного опроса: десятки гигабайт, включать только на время отладки.
+	RawStore          string        `env:"RAW_STORE" envDefault:"off"`
+	RawRetention      time.Duration `env:"RAW_RETENTION" envDefault:"48h"`
 	RetentionInterval time.Duration `env:"RETENTION_INTERVAL" envDefault:"1h"`
 
 	// Логи: JSON в stdout всегда; LOG_FILE добавляет файл с ротацией (размер в МБ, число копий, дни).
@@ -62,6 +68,28 @@ type Bohemia struct {
 }
 
 // Load читает .env (если есть) и переменные окружения. Реальное окружение приоритетнее файла.
+// RawStoreMode — что из сырых ответов сохранять.
+type RawStoreMode string
+
+const (
+	RawStoreOff  RawStoreMode = "off"
+	RawStoreScan RawStoreMode = "scan"
+	RawStoreAll  RawStoreMode = "all"
+)
+
+// Raw возвращает режим хранения сырья; неизвестное значение трактуется как off,
+// потому что «случайно включить запись десятков гигабайт» хуже, чем «случайно не записать отладку».
+func (c Config) Raw() RawStoreMode {
+	switch RawStoreMode(c.RawStore) {
+	case RawStoreScan:
+		return RawStoreScan
+	case RawStoreAll:
+		return RawStoreAll
+	default:
+		return RawStoreOff
+	}
+}
+
 func Load() (Config, error) {
 	_ = godotenv.Load(".env")
 
