@@ -176,6 +176,12 @@ var ErrNoSteamAccount = errors.New("steam: player has no known steam account")
 // старше — собираем прямо сейчас, не заставляя человека ждать следующего фонового прохода.
 const DossierMaxAge = 6 * time.Hour
 
+// DossierCollectTimeout — предел синхронного сбора. Нужен потому, что цепочка длинная:
+// мы → шлюз → четыре метода Valve. Без предела запрос висел бы, пока не сдастся клиент,
+// и человек получил бы таймаут вместо ответа. С пределом он получает то, что успели собрать,
+// а остальное доберёт фоновый обход.
+const DossierCollectTimeout = 20 * time.Second
+
 // Dossier отдаёт всё, что мы знаем об игроке со стороны Steam, и ПОПУТНО ставит его
 // в watchlist. Смысл в том, что интерес человека — лучший признак «этот игрок нам важен»:
 // заводить отдельную команду «начни собирать досье» незачем.
@@ -204,10 +210,16 @@ func (s *Service) Dossier(ctx context.Context, store DossierStore, playerID int6
 	dossier := Dossier{PlayerID: playerID, SteamID: steamID}
 
 	if !found || s.now().UTC().Sub(profile.UpdatedAt) > DossierMaxAge {
-		if err := s.Enrich(ctx, steamID); err != nil {
+		collectCtx, cancel := context.WithTimeout(ctx, DossierCollectTimeout)
+		err := s.Enrich(collectCtx, steamID)
+		cancel()
+
+		if err != nil {
 			// Сбор не удался — отдаём то, что есть. Устаревшие данные полезнее ошибки,
-			// а их возраст виден в UpdatedAt.
+			// а их возраст виден в UpdatedAt. Причину передаём наверх: без неё пустое
+			// досье выглядит как «у игрока всё скрыто», хотя на деле мы просто не дошли до Valve.
 			s.log.Warn("steam: dossier enrich failed", "steam_id", steamID, "err", err)
+			dossier.LastError = err.Error()
 		} else {
 			dossier.Collected = true
 			if profile, found, err = store.Profile(ctx, steamID); err != nil {
@@ -216,11 +228,13 @@ func (s *Service) Dossier(ctx context.Context, store DossierStore, playerID int6
 		}
 	}
 
+	// Профиля нет — значит собрать ещё ни разу не удалось. Отдаём пустое досье с причиной,
+	// а не структуру с нулевыми полями: та неотличима от «всё скрыто».
 	if !found {
 		return dossier, nil
 	}
 
-	dossier.Profile = profile
+	dossier.Profile = &profile
 
 	friends, err := store.Friends(ctx, steamID)
 	if err != nil {

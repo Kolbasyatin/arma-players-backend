@@ -114,11 +114,19 @@ type KnownFriend struct {
 }
 
 // Dossier — всё, что мы знаем об игроке со стороны Steam.
+//
+// Profile — УКАЗАТЕЛЬ, и это принципиально: null означает «данных ещё нет», а нулевая
+// структура означала бы «профиль пустой и обновлён в первом году нашей эры». Потребитель
+// на такой структуре честно нарисовал бы «библиотека скрыта» и «собрано 2025 лет назад» —
+// ровно так и случилось, пока поле было значением.
 type Dossier struct {
-	PlayerID     int64         `json:"player_id"`
-	SteamID      string        `json:"steam_id"`
-	Profile      StoredProfile `json:"profile"`
-	Friends      []KnownFriend `json:"friends"`
-	FriendsKnown int           `json:"friends_known"` // сколько из них встречались у нас
-	Collected    bool          `json:"collected"`     // собирали ли прямо сейчас
+	PlayerID     int64          `json:"player_id"`
+	SteamID      string         `json:"steam_id"`
+	Profile      *StoredProfile `json:"profile"`
+	Friends      []KnownFriend  `json:"friends"`
+	FriendsKnown int            `json:"friends_known"` // сколько из них встречались у нас
+	Collected    bool           `json:"collected"`     // собирали ли прямо сейчас
+	// LastError — почему сбор не удался, если он не удался. Человеку это объяснит,
+	// почему досье пустое: «шлюз не настроен» и «профиль закрыт» — разные новости.
+	LastError string `json:"last_error,omitempty"`
 }

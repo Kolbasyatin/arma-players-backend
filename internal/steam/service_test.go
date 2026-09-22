@@ -102,7 +102,7 @@ func TestDossier_firstCallCollectsAndRegisters(t *testing.T) {
 	if fetcher.calls != 1 {
 		t.Errorf("походов к шлюзу: want 1, got %d", fetcher.calls)
 	}
-	if dossier.Profile.PersonaName != "Шустрый" {
+	if dossier.Profile == nil || dossier.Profile.PersonaName != "Шустрый" {
 		t.Errorf("профиль не заполнен: %+v", dossier.Profile)
 	}
 
@@ -130,7 +130,7 @@ func TestDossier_freshDataIsNotRefetched(t *testing.T) {
 	if dossier.Collected {
 		t.Error("collected должен быть false: ничего не собирали")
 	}
-	if dossier.Profile.PersonaName != "Свежий" {
+	if dossier.Profile == nil || dossier.Profile.PersonaName != "Свежий" {
 		t.Errorf("отдан не сохранённый профиль: %+v", dossier.Profile)
 	}
 }
@@ -150,8 +150,11 @@ func TestDossier_staleDataReturnedWhenGatewayFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("отказ шлюза не должен ронять досье: %v", err)
 	}
-	if dossier.Profile.PersonaName != "Старый" {
+	if dossier.Profile == nil || dossier.Profile.PersonaName != "Старый" {
 		t.Errorf("не отдан сохранённый профиль: %+v", dossier.Profile)
+	}
+	if dossier.LastError == "" {
+		t.Error("причина неудачи должна дойти до потребителя")
 	}
 	if dossier.Collected {
 		t.Error("collected должен быть false: сбор не удался")
@@ -195,5 +198,29 @@ func TestDossier_countsFriendsKnownToUs(t *testing.T) {
 	// Смысл графа именно в этом числе: сколько его друзей мы сами видели на серверах.
 	if dossier.FriendsKnown != 1 {
 		t.Errorf("знакомых друзей: want 1, got %d", dossier.FriendsKnown)
+	}
+}
+
+// Регрессия. Когда собрать не удалось, профиля в базе нет — и раньше наружу уходила нулевая
+// структура. Потребитель честно рисовал по ней «библиотека игр скрыта» и «данные собраны
+// 2025 лет назад»: нулевое время — это первый год нашей эры. Отсутствие данных обязано
+// отличаться от данных об отсутствии.
+func TestDossier_missingProfileIsNilNotZeroValue(t *testing.T) {
+	store := &fakeStore{
+		steamIDs: map[int64][]string{7: {"111"}},
+		profile:  map[string]steam.StoredProfile{},
+	}
+	fetcher := &fakeFetcher{err: errors.New("gateway down")}
+
+	dossier, err := newService(store, fetcher).Dossier(context.Background(), store, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if dossier.Profile != nil {
+		t.Errorf("профиля быть не должно, got %+v", *dossier.Profile)
+	}
+	if dossier.LastError == "" {
+		t.Error("без причины человек не поймёт, почему досье пустое")
 	}
 }
