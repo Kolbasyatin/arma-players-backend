@@ -126,7 +126,11 @@ type KnownFriend struct {
 // на такой структуре честно нарисовал бы «библиотека скрыта» и «собрано 2025 лет назад» —
 // ровно так и случилось, пока поле было значением.
 type Dossier struct {
-	PlayerID     int64          `json:"player_id"`
+	// PlayerID — наш игрок. 0, если этот Steam-аккаунт у нас не наблюдался: досье можно
+	// запросить и по произвольному SteamID, никак с Arma не связанному.
+	PlayerID int64 `json:"player_id"`
+	// Nickname — как этого человека зовут в игре у нас. Пусто вместе с PlayerID.
+	Nickname     string         `json:"nickname,omitempty"`
 	SteamID      string         `json:"steam_id"`
 	Profile      *StoredProfile `json:"profile"`
 	Friends      []KnownFriend  `json:"friends"`

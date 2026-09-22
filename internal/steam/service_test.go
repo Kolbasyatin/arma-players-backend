@@ -55,6 +55,17 @@ func (f *fakeStore) Friends(context.Context, string) ([]steam.KnownFriend, error
 	return f.friends, nil
 }
 
+func (f *fakeStore) PlayerBySteamID(_ context.Context, steamID string) (int64, string, bool, error) {
+	for playerID, ids := range f.steamIDs {
+		for _, id := range ids {
+			if id == steamID {
+				return playerID, "Известный", true, nil
+			}
+		}
+	}
+	return 0, "", false, nil
+}
+
 func (f *fakeStore) AddToWatchlist(_ context.Context, steamID, _, _ string) error {
 	f.watchlist = append(f.watchlist, steamID)
 	return nil
@@ -222,5 +233,48 @@ func TestDossier_missingProfileIsNilNotZeroValue(t *testing.T) {
 	}
 	if dossier.LastError == "" {
 		t.Error("без причины человек не поймёт, почему досье пустое")
+	}
+}
+
+// Досье по произвольному SteamID: игрока в Arma может не быть вовсе. Steam про нашу игру
+// ничего не знает, и связь с игроком для сбора не нужна — схема ключуется по steam_id.
+func TestDossierBySteamID_worksForAccountUnknownToUs(t *testing.T) {
+	store := &fakeStore{steamIDs: map[int64][]string{}, profile: map[string]steam.StoredProfile{}}
+	fetcher := &fakeFetcher{}
+
+	dossier, err := newService(store, fetcher).DossierBySteamID(context.Background(), store, "76561199485187498")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if dossier.SteamID != "76561199485187498" {
+		t.Errorf("steam id: got %q", dossier.SteamID)
+	}
+	if dossier.PlayerID != 0 || dossier.Nickname != "" {
+		t.Errorf("игрока быть не должно: id=%d nickname=%q", dossier.PlayerID, dossier.Nickname)
+	}
+	if !dossier.Collected {
+		t.Error("данных не было — значит собираем сразу")
+	}
+	if len(store.watchlist) != 1 {
+		t.Errorf("аккаунт должен попасть в watchlist: %v", store.watchlist)
+	}
+}
+
+// А если аккаунт всё-таки наш — говорим об этом: связка «SteamID → наш игрок» и есть
+// главная ценность обратного поиска.
+func TestDossierBySteamID_reportsOurPlayerWhenKnown(t *testing.T) {
+	store := &fakeStore{
+		steamIDs: map[int64][]string{42: {"76561198884181842"}},
+		profile:  map[string]steam.StoredProfile{},
+	}
+
+	dossier, err := newService(store, &fakeFetcher{}).DossierBySteamID(context.Background(), store, "76561198884181842")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if dossier.PlayerID != 42 || dossier.Nickname != "Известный" {
+		t.Errorf("наш игрок не опознан: id=%d nickname=%q", dossier.PlayerID, dossier.Nickname)
 	}
 }

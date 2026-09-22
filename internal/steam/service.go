@@ -26,6 +26,7 @@ type DossierStore interface {
 	Profile(ctx context.Context, steamID string) (StoredProfile, bool, error)
 	Friends(ctx context.Context, steamID string) ([]KnownFriend, error)
 	AddToWatchlist(ctx context.Context, steamID, addedBy, note string) error
+	PlayerBySteamID(ctx context.Context, steamID string) (int64, string, bool, error)
 }
 
 // Fetcher — шлюз. Отдельным интерфейсом, чтобы сервис тестировался без сети.
@@ -196,9 +197,26 @@ func (s *Service) Dossier(ctx context.Context, store DossierStore, playerID int6
 	if len(ids) == 0 {
 		return Dossier{}, ErrNoSteamAccount
 	}
-	steamID := ids[0]
 
+	return s.dossier(ctx, store, ids[0])
+}
+
+// DossierBySteamID — то же самое, но по произвольному SteamID64, который с Arma может быть
+// не связан вовсе. Схема это допускает без единой правки: snapshot, profile и watchlist
+// ключуются по steam_id, а не по игроку. Связь с нашими игроками нужна только для поиска по нику.
+func (s *Service) DossierBySteamID(ctx context.Context, store DossierStore, steamID string) (Dossier, error) {
+	return s.dossier(ctx, store, steamID)
+}
+
+func (s *Service) dossier(ctx context.Context, store DossierStore, steamID string) (Dossier, error) {
 	if err := store.AddToWatchlist(ctx, steamID, "dossier", ""); err != nil {
+		return Dossier{}, err
+	}
+
+	// Кто это у нас, если вообще кто-то. Для запроса по SteamID это единственный способ
+	// связать аккаунт с игроком; для запроса по игроку — проверка, что связь та самая.
+	playerID, nickname, _, err := store.PlayerBySteamID(ctx, steamID)
+	if err != nil {
 		return Dossier{}, err
 	}
 
@@ -207,7 +225,7 @@ func (s *Service) Dossier(ctx context.Context, store DossierStore, playerID int6
 		return Dossier{}, err
 	}
 
-	dossier := Dossier{PlayerID: playerID, SteamID: steamID}
+	dossier := Dossier{PlayerID: playerID, Nickname: nickname, SteamID: steamID}
 
 	if !found || s.now().UTC().Sub(profile.UpdatedAt) > DossierMaxAge {
 		collectCtx, cancel := context.WithTimeout(ctx, DossierCollectTimeout)

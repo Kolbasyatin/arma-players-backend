@@ -279,3 +279,27 @@ func (r *SteamRepo) Friends(ctx context.Context, steamID string) ([]steam.KnownF
 	}
 	return friends, rows.Err()
 }
+
+// PlayerBySteamID — обратное сопоставление: знаем ли мы владельца этого Steam-аккаунта
+// по своим наблюдениям. Нужно для досье по произвольному SteamID: человек может спросить
+// про аккаунт, которого в Arma нет вовсе, и тогда ответ будет пустым — это нормально.
+func (r *SteamRepo) PlayerBySteamID(ctx context.Context, steamID string) (int64, string, bool, error) {
+	var (
+		playerID int64
+		nickname string
+	)
+	err := r.pool.QueryRow(ctx, `
+		SELECT p.id, p.current_nickname
+		FROM player_platform_identity pl
+		JOIN player_identity p ON p.id = pl.player_id
+		WHERE pl.game_client_type = 'PLATFORM_PC' AND pl.platform_user_id = $1
+		ORDER BY pl.last_seen_at DESC
+		LIMIT 1`, steamID).Scan(&playerID, &nickname)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return 0, "", false, nil
+	case err != nil:
+		return 0, "", false, fmt.Errorf("steam: player by steam id: %w", err)
+	}
+	return playerID, nickname, true, nil
+}

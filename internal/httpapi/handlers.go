@@ -126,6 +126,26 @@ func registerAPI(mux *http.ServeMux, store Store, dossier DossierProvider, token
 			}
 			writeJSON(w, http.StatusOK, d)
 		})))
+
+		// Досье по произвольному SteamID64. Отдельный маршрут, а не параметр к /players:
+		// игрока здесь может не быть вовсе, и путь через /players вводил бы в заблуждение.
+		mux.Handle("GET /steam/{steamId}", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			steamID := r.PathValue("steamId")
+
+			// 17 цифр. Проверяем до похода наружу: Valve на мусор отвечает 200 с пустым
+			// списком, и «нет такого» станет неотличимо от «неверный запрос».
+			if len(steamID) != 17 || strings.TrimLeft(steamID, "0123456789") != "" {
+				writeJSON(w, http.StatusBadRequest, errorBody("steamId must be a 17-digit SteamID64"))
+				return
+			}
+
+			d, err := dossier.DossierBySteamID(r.Context(), steamID)
+			if err != nil {
+				serverError(w, "steam dossier", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, d)
+		})))
 	}
 
 	mux.Handle("GET /servers", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

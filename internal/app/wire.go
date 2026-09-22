@@ -46,6 +46,10 @@ func (d steamDossier) Dossier(ctx context.Context, playerID int64) (steam.Dossie
 	return d.service.Dossier(ctx, d.store, playerID)
 }
 
+func (d steamDossier) DossierBySteamID(ctx context.Context, steamID string) (steam.Dossier, error) {
+	return d.service.DossierBySteamID(ctx, d.store, steamID)
+}
+
 // Services — все фоновые компоненты observer, собранные на общих клиенте, токене и пуле.
 type Services struct {
 	Scanner *catalog.Scanner

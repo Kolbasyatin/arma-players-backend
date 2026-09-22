@@ -54,6 +54,9 @@ type StatusProvider interface {
 // без поведения, и дублировать их ради чистоты слоя — обмен понятности на церемонию.
 type DossierProvider interface {
 	Dossier(ctx context.Context, playerID int64) (steam.Dossier, error)
+	// DossierBySteamID — по произвольному SteamID64, в том числе такому, которого в Arma
+	// никогда не было: Steam про нашу игру ничего не знает, и связь с игроком необязательна.
+	DossierBySteamID(ctx context.Context, steamID string) (steam.Dossier, error)
 }
 
 func logger() *slog.Logger { return slog.Default() }
