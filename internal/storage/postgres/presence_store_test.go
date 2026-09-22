@@ -164,3 +164,73 @@ func TestPresenceStore_repeatedObservationsDoNotRewritePlayerRows(t *testing.T) 
 		t.Errorf("событие переименования: ожидалось 1, получено %d", renameEvents)
 	}
 }
+
+// Игрок вернул прежний ник: A → B → A, дальше сидит под A.
+// Событий должно быть ровно два, и ни одного лишнего на последующих опросах.
+func TestPresenceStore_nicknameRevertedToPreviousEmitsExactlyTwoEvents(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	if _, err := postgres.NewCatalogRepo(pool).SaveLobbyPage(ctx, time.Now(), loadRooms(t), []byte(`{}`), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	svc := presence.NewService(postgres.NewPresenceStore(pool), presence.Config{AbsentConfirmations: 2})
+
+	t0 := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	const userID = "4537e0d4-f960-46ac-bafc-a0ad390b41ea"
+
+	observe := func(at time.Time, nickname string) {
+		t.Helper()
+		p := bohemia.Player{UserID: userID, Username: nickname, GameClientType: "PLATFORM_PC", PlatformUserID: "76561198884181842"}
+		if _, err := svc.Apply(ctx, presence.Observation{ServerID: 1, ObservedAt: at, Connected: []bohemia.Player{p}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	renames := func() []string {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT (payload->>'old') || '->' || (payload->>'new')
+			FROM domain_event WHERE event_type = 'PLAYER_NICKNAME_CHANGED' ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+
+	observe(t0, "Alpha")                    // завели игрока
+	observe(t0.Add(5*time.Minute), "Bravo")  // смена Alpha -> Bravo
+	observe(t0.Add(10*time.Minute), "Alpha") // вернул прежний: Bravo -> Alpha
+	// Дальше сидит под Alpha — новых событий быть не должно.
+	for i := 3; i <= 8; i++ {
+		observe(t0.Add(time.Duration(i)*5*time.Minute), "Alpha")
+	}
+
+	got := renames()
+	want := []string{"Alpha->Bravo", "Bravo->Alpha"}
+	if len(got) != len(want) {
+		t.Fatalf("событий о смене ника: want %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("событие %d: want %q, got %q", i, want[i], got[i])
+		}
+	}
+
+	var current string
+	if err := pool.QueryRow(ctx, `SELECT current_nickname FROM player_identity WHERE bohemia_user_id = $1`, userID).Scan(&current); err != nil {
+		t.Fatal(err)
+	}
+	if current != "Alpha" {
+		t.Errorf("current_nickname: want Alpha, got %q", current)
+	}
+}

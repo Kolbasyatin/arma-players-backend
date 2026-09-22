@@ -69,8 +69,28 @@ const touchInterval = time.Hour
 // заново — это и есть разница между семью миллионами обновлений в сутки и двумястами тысячами.
 func (t *presenceTx) UpsertPlayer(ctx context.Context, p bohemia.Player, seenAt time.Time) (presence.PlayerRef, error) {
 	var ref presence.PlayerRef
-	// xmax = 0 у только что вставленной строки — стандартный способ отличить INSERT от UPDATE в upsert.
-	err := t.tx.QueryRow(ctx, `
+
+	// Состояние ДО записи. Именно player_identity.current_nickname решает, была ли смена ника:
+	// это ровно тот ник, под которым мы видели игрока в прошлый раз.
+	//
+	// Брать предыдущий ник из player_alias (самый свежий по last_seen_at) нельзя: отметки времени
+	// в алиасах обновляются не чаще touchInterval, поэтому «самым свежим» там ещё час числится
+	// ник, который игрок уже сменил. Игрок, вернувший прежний ник (A → B → A), получал из-за
+	// этого событие «B → A» на КАЖДОМ опросе следующего часа.
+	existed := true
+	err := t.tx.QueryRow(ctx,
+		`SELECT id, current_nickname FROM player_identity WHERE bohemia_user_id = $1`, p.UserID).
+		Scan(&ref.PlayerID, &ref.PreviousNickname)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		existed, ref.PreviousNickname = false, ""
+	case err != nil:
+		return ref, fmt.Errorf("player_identity lookup: %w", err)
+	}
+	ref.IsNew = !existed
+
+	var id int64
+	err = t.tx.QueryRow(ctx, `
 		INSERT INTO player_identity (bohemia_user_id, current_nickname, first_seen_at, last_seen_at)
 		VALUES ($1, $2, $3, $3)
 		ON CONFLICT (bohemia_user_id) DO UPDATE
@@ -79,29 +99,24 @@ func (t *presenceTx) UpsertPlayer(ctx context.Context, p bohemia.Player, seenAt 
 		       updated_at       = now()
 		   WHERE player_identity.current_nickname <> EXCLUDED.current_nickname
 		      OR player_identity.last_seen_at < EXCLUDED.last_seen_at - $4::interval
-		RETURNING id, (xmax = 0) AS inserted`,
-		p.UserID, p.Username, seenAt, touchInterval).Scan(&ref.PlayerID, &ref.IsNew)
-
+		RETURNING id`,
+		p.UserID, p.Username, seenAt, touchInterval).Scan(&id)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		// Условие DO UPDATE не выполнилось — строка существует и трогать её незачем.
-		// RETURNING в этом случае не отдаёт ничего, поэтому id читаем отдельно.
-		if err := t.tx.QueryRow(ctx,
-			`SELECT id FROM player_identity WHERE bohemia_user_id = $1`, p.UserID).Scan(&ref.PlayerID); err != nil {
-			return ref, fmt.Errorf("player_identity id: %w", err)
+		// Условие DO UPDATE не выполнилось — строка есть и трогать её незачем, id уже прочитан выше.
+		// Если же строки до нас не было, значит её вставил параллельный опрос между нашим SELECT
+		// и INSERT (один игрок может попасть в опрос двух серверов: играет на одном, стоит
+		// в очереди на другой). Тогда id читаем заново.
+		if !existed {
+			if err := t.tx.QueryRow(ctx,
+				`SELECT id FROM player_identity WHERE bohemia_user_id = $1`, p.UserID).Scan(&ref.PlayerID); err != nil {
+				return ref, fmt.Errorf("player_identity id: %w", err)
+			}
 		}
 	case err != nil:
 		return ref, fmt.Errorf("upsert player_identity: %w", err)
-	}
-
-	// Предыдущий ник берём из алиасов: самый свежий до этого наблюдения.
-	if !ref.IsNew {
-		err = t.tx.QueryRow(ctx, `
-			SELECT nickname FROM player_alias
-			WHERE player_id = $1 ORDER BY last_seen_at DESC, id DESC LIMIT 1`, ref.PlayerID).Scan(&ref.PreviousNickname)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return ref, fmt.Errorf("previous alias: %w", err)
-		}
+	default:
+		ref.PlayerID = id
 	}
 
 	batch := &pgx.Batch{}

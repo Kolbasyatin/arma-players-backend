@@ -1179,6 +1179,15 @@ PLAYER_NICKNAME_CHANGED
 
 Нужна idempotency/deduplication — обеспечивается монотонным `domain_event.id` и курсором потребителя.
 
+`PLAYER_NICKNAME_CHANGED` порождается сравнением наблюдённого ника с `player_identity.current_nickname`,
+прочитанным ДО upsert. Источник обязателен именно этот: `player_alias.last_seen_at` обновляется не чаще
+`touchInterval` (час), поэтому «самый свежий алиас» там какое-то время показывает уже сменённый ник —
+игрок, вернувший прежнее имя (A → B → A), получал из-за этого событие «B → A» на каждом опросе
+следующего часа. Тест: `TestPresenceStore_nicknameRevertedToPreviousEmitsExactlyTwoEvents`.
+
+Ник «на момент события» в ленте API для этого типа берётся из `payload->>'old'`: сессии у события нет,
+а `current_nickname` к моменту чтения уже новый.
+
 ---
 
 # 16. Notification transports

@@ -93,7 +93,11 @@ const playerSummarySQL = `
 	       -- там обновляется редко (раз в час), чтобы не переписывать строку на каждый опрос,
 	       -- а сессия обновляется каждым опросом по своей прямой надобности и потому точна.
 	       GREATEST(p.last_seen_at, l.seen) AS last_seen_at,
-	       COALESCE((SELECT array_agg(a.nickname ORDER BY a.last_seen_at DESC) FROM player_alias a WHERE a.player_id = p.id), '{}'),
+	       -- Текущий ник первым, остальные по свежести. Явное условие нужно потому, что last_seen_at
+	       -- у алиасов обновляется не чаще раза в час, и после возврата к прежнему нику он
+	       -- какое-то время числится не самым свежим.
+	       COALESCE((SELECT array_agg(a.nickname ORDER BY (a.nickname = p.current_nickname) DESC, a.last_seen_at DESC)
+	                 FROM player_alias a WHERE a.player_id = p.id), '{}'),
 	       COALESCE((SELECT json_agg(json_build_object('type', pl.game_client_type, 'id', pl.platform_user_id, 'last_seen_at', pl.last_seen_at) ORDER BY pl.last_seen_at DESC)
 	                 FROM player_platform_identity pl WHERE pl.player_id = p.id), '[]'),
 	       (SELECT count(*) FROM player_server_session ss WHERE ss.player_id = p.id),
