@@ -22,9 +22,15 @@ const (
 const ReforgerAppID = 1874880
 
 // Snapshot — ответ шлюза целиком.
+//
+// Имена полей в camelCase, а не в snake_case, как в нашем собственном API: так их отдаёт
+// arma-reforger-hz. ASP.NET по умолчанию сериализует свойства именно так, и Go-клиент токена
+// давно живёт с тем же соглашением (`accessToken`). Несовпадение здесь ничем не выдаёт себя
+// при разборе — json просто оставляет поле пустым, — и первым признаком было
+// «gateway answered for "", asked for ...».
 type Snapshot struct {
-	SteamID   string    `json:"steam_id"`
-	FetchedAt time.Time `json:"fetched_at"`
+	SteamID   string    `json:"steamId"`
+	FetchedAt time.Time `json:"fetchedAt"`
 	Sources   []Source  `json:"sources"`
 }
 
