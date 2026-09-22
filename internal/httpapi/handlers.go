@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"armaplayers/internal/steam"
 )
 
 // registerAPI подключает защищённые токеном маршруты.
-func registerAPI(mux *http.ServeMux, store Store, token string) {
+func registerAPI(mux *http.ServeMux, store Store, dossier DossierProvider, token string) {
 	auth := bearerAuth(token)
 
 	mux.Handle("GET /events", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +104,29 @@ func registerAPI(mux *http.ServeMux, store Store, token string) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sessions": nonNil(sessions)})
 	})))
+
+	// Досье Steam. Обращение к нему ЗАОДНО ставит игрока в watchlist: интерес человека —
+	// лучший признак «этот игрок нам важен», и отдельная команда «начни собирать» не нужна.
+	// Маршрут регистрируется, только если сбор данных Steam включён (STEAM_GATEWAY_URL).
+	if dossier != nil {
+		mux.Handle("GET /players/{id}/steam", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody("id: integer expected"))
+				return
+			}
+			d, err := dossier.Dossier(r.Context(), id)
+			switch {
+			case errors.Is(err, steam.ErrNoSteamAccount):
+				writeJSON(w, http.StatusNotFound, errorBody("player has no known steam account"))
+				return
+			case err != nil:
+				serverError(w, "player steam", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, d)
+		})))
+	}
 
 	mux.Handle("GET /servers", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tracked := r.URL.Query().Get("tracked") == "true"

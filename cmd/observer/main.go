@@ -19,6 +19,7 @@ import (
 	"armaplayers/internal/config"
 	"armaplayers/internal/httpapi"
 	"armaplayers/internal/logging"
+	"armaplayers/internal/steam"
 	"armaplayers/internal/storage/postgres"
 )
 
@@ -76,7 +77,23 @@ func run() error {
 	g.Go(func() error { return svc.Tracker.RunLoop(ctx) })
 	g.Go(func() error { return svc.Scanner.RunRetentionLoop(ctx, cfg.RetentionInterval) })
 
-	srv := httpapi.NewServer(cfg.HTTPAddr, postgres.NewStatusRepo(pool), postgres.NewAPIRepo(pool), cfg.APIToken)
+	// Обогащение данными Steam запускается, только если задан шлюз: без него тема выключена,
+	// а лишняя горутина, каждый час ходящая в никуда, — это шум в логах на ровном месте.
+	if svc.Steam != nil {
+		g.Go(func() error {
+			return svc.Steam.RunLoop(ctx, steam.LoopConfig{
+				Interval: cfg.SteamRefreshInterval,
+				Batch:    cfg.SteamBatch,
+				Policy: steam.WatchlistPolicy{
+					ActiveWindow:    cfg.SteamActiveWindow,
+					ActiveStaleness: cfg.SteamActiveStaleness,
+					IdleStaleness:   cfg.SteamIdleStaleness,
+				},
+			})
+		})
+	}
+
+	srv := httpapi.NewServer(cfg.HTTPAddr, postgres.NewStatusRepo(pool), postgres.NewAPIRepo(pool), svc.Dossier, cfg.APIToken)
 	g.Go(func() error {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http: %w", err)

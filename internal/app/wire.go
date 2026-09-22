@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,7 +11,9 @@ import (
 	"armaplayers/internal/bohemia"
 	"armaplayers/internal/catalog"
 	"armaplayers/internal/config"
+	"armaplayers/internal/httpapi"
 	"armaplayers/internal/presence"
+	"armaplayers/internal/steam"
 	"armaplayers/internal/storage/postgres"
 	"armaplayers/internal/token"
 	"armaplayers/internal/tracking"
@@ -32,10 +35,26 @@ func NewTokenProvider(cfg config.Config) *token.Provider {
 	return token.NewProvider(token.NewHTTPSource(cfg.TokenURL, nil), 0)
 }
 
+// steamDossier связывает сервис Steam с его хранилищем: httpapi нужен один метод,
+// а сервису — переданный store, потому что фоновому циклу он не нужен.
+type steamDossier struct {
+	service *steam.Service
+	store   steam.DossierStore
+}
+
+func (d steamDossier) Dossier(ctx context.Context, playerID int64) (steam.Dossier, error) {
+	return d.service.Dossier(ctx, d.store, playerID)
+}
+
 // Services — все фоновые компоненты observer, собранные на общих клиенте, токене и пуле.
 type Services struct {
 	Scanner *catalog.Scanner
 	Tracker *tracking.Tracker
+	// Steam — nil, если STEAM_GATEWAY_URL не задан: тема необязательная, и без шлюза
+	// observer обязан работать ровно как раньше.
+	Steam *steam.Service
+	// Dossier — реализация httpapi.DossierProvider; nil вместе со Steam.
+	Dossier httpapi.DossierProvider
 }
 
 func NewServices(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) Services {
@@ -63,5 +82,13 @@ func NewServices(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) Servic
 		StoreRaw:     raw == config.RawStoreAll,
 	}, log)
 
-	return Services{Scanner: scanner, Tracker: tracker}
+	services := Services{Scanner: scanner, Tracker: tracker}
+
+	if cfg.SteamGatewayURL != "" {
+		repo := postgres.NewSteamRepo(pool)
+		services.Steam = steam.NewService(steam.NewClient(cfg.SteamGatewayURL, nil), repo, log)
+		services.Dossier = steamDossier{service: services.Steam, store: repo}
+	}
+
+	return services
 }

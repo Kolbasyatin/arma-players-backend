@@ -63,7 +63,7 @@ func (f *fakeStore) Servers(context.Context, bool, string) ([]httpapi.ServerSumm
 
 func newAPI(t *testing.T, store *fakeStore) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(httpapi.NewServer(":0", fakeStatus{}, store, "secret").Handler)
+	srv := httptest.NewServer(httpapi.NewServer(":0", fakeStatus{}, store, nil, "secret").Handler)
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -102,7 +102,7 @@ func TestAPI_auth(t *testing.T) {
 }
 
 func TestAPI_disabledWithoutToken(t *testing.T) {
-	srv := httptest.NewServer(httpapi.NewServer(":0", fakeStatus{}, &fakeStore{}, "").Handler)
+	srv := httptest.NewServer(httpapi.NewServer(":0", fakeStatus{}, &fakeStore{}, nil, "").Handler)
 	defer srv.Close()
 	if code, _ := get(t, srv.URL+"/events", "anything"); code != http.StatusServiceUnavailable {
 		t.Errorf("want 503 when API_TOKEN empty, got %d", code)

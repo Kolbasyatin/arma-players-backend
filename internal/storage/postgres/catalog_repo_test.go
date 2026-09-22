@@ -31,7 +31,8 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := postgres.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `TRUNCATE domain_event, player_queue_session, player_server_session, player_alias, player_platform_identity, player_identity, poll_run, server_observation, server_identity_key, server_merge, server_mod, mod, server, raw_payload RESTART IDENTITY CASCADE`)
+	_, err = pool.Exec(ctx, `TRUNCATE domain_event, player_queue_session, player_server_session, player_alias, player_platform_identity, player_identity, poll_run, server_observation, server_identity_key, server_merge, server_mod, mod, server, raw_payload,
+		steam.friend_edge, steam.profile, steam.snapshot, steam.watchlist RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"armaplayers/internal/steam"
 )
 
 // Status — снимок здоровья наблюдения. Реализация StatusProvider — storage/postgres.StatusRepo.
@@ -45,14 +47,23 @@ type StatusProvider interface {
 	Status(ctx context.Context) (Status, error)
 }
 
+// DossierProvider — досье Steam по нашему игроку. Интерфейс объявлен здесь, у потребителя;
+// реализацию собирает app. nil — маршрут не регистрируется, и observer работает как раньше.
+//
+// Тип ответа берётся из steam, а не переписывается здесь двадцатью полями: это простые данные
+// без поведения, и дублировать их ради чистоты слоя — обмен понятности на церемонию.
+type DossierProvider interface {
+	Dossier(ctx context.Context, playerID int64) (steam.Dossier, error)
+}
+
 func logger() *slog.Logger { return slog.Default() }
 
 // NewServer собирает http.Server с таймаутами: сервис без них уязвим к зависшим клиентам.
 // store и apiToken включают REST API для внешних потребителей (nil/"" — только служебные маршруты).
-func NewServer(addr string, status StatusProvider, store Store, apiToken string) *http.Server {
+func NewServer(addr string, status StatusProvider, store Store, dossier DossierProvider, apiToken string) *http.Server {
 	mux := http.NewServeMux()
 	if store != nil {
-		registerAPI(mux, store, apiToken)
+		registerAPI(mux, store, dossier, apiToken)
 	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

@@ -207,7 +207,7 @@ func TestPresenceStore_nicknameRevertedToPreviousEmitsExactlyTwoEvents(t *testin
 		return out
 	}
 
-	observe(t0, "Alpha")                    // завели игрока
+	observe(t0, "Alpha")                     // завели игрока
 	observe(t0.Add(5*time.Minute), "Bravo")  // смена Alpha -> Bravo
 	observe(t0.Add(10*time.Minute), "Alpha") // вернул прежний: Bravo -> Alpha
 	// Дальше сидит под Alpha — новых событий быть не должно.

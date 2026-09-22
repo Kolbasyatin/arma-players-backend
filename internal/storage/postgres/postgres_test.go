@@ -46,20 +46,45 @@ func TestMigrate(t *testing.T) {
 	}
 
 	// Требование проекта: у каждой колонки наших таблиц есть COMMENT ON.
-	var uncommented int
-	err = pool.QueryRow(ctx, `
-		SELECT count(*)
+	//
+	// Список таблиц НЕ перечисляется: проверяются все наши схемы целиком, поэтому новая таблица
+	// попадает под правило автоматически. Раньше список был захардкожен, и схема steam
+	// проскочила бы мимо проверки незамеченной.
+	rows, err := pool.Query(ctx, `
+		SELECT c.table_schema || '.' || c.table_name || '.' || c.column_name
 		FROM information_schema.columns c
 		JOIN pg_class cl ON cl.relname = c.table_name
 		JOIN pg_namespace n ON n.oid = cl.relnamespace AND n.nspname = c.table_schema
-		WHERE c.table_schema = 'public'
-		  AND c.table_name IN ('server','server_identity_key','server_observation','poll_run','raw_payload','player_identity','player_platform_identity','player_alias','player_server_session','player_queue_session','domain_event','server_merge','mod','server_mod')
-		  AND col_description(cl.oid, c.ordinal_position) IS NULL`).Scan(&uncommented)
+		WHERE c.table_schema IN ('public', 'steam')
+		  AND c.table_name <> 'goose_db_version'
+		  AND col_description(cl.oid, c.ordinal_position) IS NULL
+		ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uncommented != 0 {
-		t.Errorf("колонок без COMMENT ON: %d", uncommented)
+	defer rows.Close()
+	var uncommented []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			t.Fatal(err)
+		}
+		uncommented = append(uncommented, column)
+	}
+	if len(uncommented) > 0 {
+		t.Errorf("колонок без COMMENT ON: %d — %v", len(uncommented), uncommented)
+	}
+
+	// Таблицы самой схемы steam: она заводится отдельной миграцией и легко забыть накатить.
+	var steamTables int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'steam'
+		  AND table_name IN ('watchlist','snapshot','profile','friend_edge')`).Scan(&steamTables); err != nil {
+		t.Fatal(err)
+	}
+	if steamTables != 4 {
+		t.Errorf("таблиц в схеме steam: want 4, got %d", steamTables)
 	}
 
 	// Индекс под запрос «последний успешный listPlayers по серверу»: он выполняется на каждом

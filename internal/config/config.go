@@ -48,6 +48,20 @@ type Config struct {
 	RawRetention      time.Duration `env:"RAW_RETENTION" envDefault:"48h"`
 	RetentionInterval time.Duration `env:"RETENTION_INTERVAL" envDefault:"1h"`
 
+	// Данные Steam об «избранных» игроках (схема steam). Ключ Valve живёт в arma-reforger-hz,
+	// сюда приходят уже собранные ответы.
+	//   SteamGatewayURL — корень hz, например http://arma-reforger-hz:8080. Пусто — тема выключена.
+	//   SteamRefreshInterval — как часто просыпается обход списка;
+	//   SteamBatch — сколько игроков за один проход, чтобы не выгрести квоту разом.
+	//   SteamActiveWindow — за какой срок игрок должен появиться на наших серверах, чтобы
+	//     считаться активным; активных обновляем часто, остальных редко.
+	SteamGatewayURL      string        `env:"STEAM_GATEWAY_URL"`
+	SteamRefreshInterval time.Duration `env:"STEAM_REFRESH_INTERVAL" envDefault:"1h"`
+	SteamActiveWindow    time.Duration `env:"STEAM_ACTIVE_WINDOW" envDefault:"168h"`
+	SteamActiveStaleness time.Duration `env:"STEAM_ACTIVE_STALENESS" envDefault:"24h"`
+	SteamIdleStaleness   time.Duration `env:"STEAM_IDLE_STALENESS" envDefault:"168h"`
+	SteamBatch           int           `env:"STEAM_BATCH" envDefault:"50"`
+
 	// Логи: JSON в stdout всегда; LOG_FILE добавляет файл с ротацией (размер в МБ, число копий, дни).
 	LogFile       string `env:"LOG_FILE"`
 	LogMaxSizeMB  int    `env:"LOG_MAX_SIZE_MB" envDefault:"50"`
