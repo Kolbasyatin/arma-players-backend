@@ -76,6 +76,7 @@ func run() error {
 	g.Go(func() error { return svc.Scanner.RunLoop(ctx, cfg.LobbyScanInterval, cfg.LobbyScanRetry) })
 	g.Go(func() error { return svc.Tracker.RunLoop(ctx) })
 	g.Go(func() error { return svc.Scanner.RunRetentionLoop(ctx, cfg.RetentionInterval) })
+	g.Go(func() error { return svc.Retention.RunLoop(ctx) })
 
 	// Обогащение данными Steam запускается, только если задан шлюз: без него тема выключена,
 	// а лишняя горутина, каждый час ходящая в никуда, — это шум в логах на ровном месте.

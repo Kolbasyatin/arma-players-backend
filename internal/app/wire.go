@@ -13,6 +13,7 @@ import (
 	"armaplayers/internal/config"
 	"armaplayers/internal/httpapi"
 	"armaplayers/internal/presence"
+	"armaplayers/internal/retention"
 	"armaplayers/internal/steam"
 	"armaplayers/internal/storage/postgres"
 	"armaplayers/internal/token"
@@ -54,6 +55,8 @@ func (d steamDossier) DossierBySteamID(ctx context.Context, steamID string) (ste
 type Services struct {
 	Scanner *catalog.Scanner
 	Tracker *tracking.Tracker
+	// Retention — свёртки истории и чистка растущих таблиц.
+	Retention *retention.Service
 	// Steam — nil, если STEAM_GATEWAY_URL не задан: тема необязательная, и без шлюза
 	// observer обязан работать ровно как раньше.
 	Steam *steam.Service
@@ -86,7 +89,16 @@ func NewServices(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) Servic
 		StoreRaw:     raw == config.RawStoreAll,
 	}, log)
 
-	services := Services{Scanner: scanner, Tracker: tracker}
+	keeper := retention.NewService(postgres.NewRollupRepo(pool), retention.Config{
+		Interval:             cfg.RollupInterval,
+		Overlap:              cfg.RollupOverlap,
+		OverlapDays:          cfg.RollupOverlapDays,
+		ObservationRetention: cfg.ObservationRetention,
+		PollRunRetention:     cfg.PollRunRetention,
+		EventRetention:       cfg.EventRetention,
+	}, log)
+
+	services := Services{Scanner: scanner, Tracker: tracker, Retention: keeper}
 
 	if cfg.SteamGatewayURL != "" {
 		repo := postgres.NewSteamRepo(pool)

@@ -62,6 +62,16 @@ type Config struct {
 	SteamIdleStaleness   time.Duration `env:"STEAM_IDLE_STALENESS" envDefault:"168h"`
 	SteamBatch           int           `env:"STEAM_BATCH" envDefault:"50"`
 
+	// Свёртки и чистка растущих таблиц (AGENTS §12). Подробности живут ограниченный срок,
+	// свёртки — вечно: они на два порядка меньше. Ноль в любом из сроков выключает чистку
+	// этой таблицы, свёртки при этом продолжают считаться.
+	RollupInterval       time.Duration `env:"ROLLUP_INTERVAL" envDefault:"1h"`
+	RollupOverlap        time.Duration `env:"ROLLUP_OVERLAP" envDefault:"3h"`
+	RollupOverlapDays    int           `env:"ROLLUP_OVERLAP_DAYS" envDefault:"2"`
+	ObservationRetention time.Duration `env:"OBSERVATION_RETENTION" envDefault:"168h"`
+	PollRunRetention     time.Duration `env:"POLL_RUN_RETENTION" envDefault:"168h"`
+	EventRetention       time.Duration `env:"EVENT_RETENTION" envDefault:"168h"`
+
 	// Логи: JSON в stdout всегда; LOG_FILE добавляет файл с ротацией (размер в МБ, число копий, дни).
 	LogFile       string `env:"LOG_FILE"`
 	LogMaxSizeMB  int    `env:"LOG_MAX_SIZE_MB" envDefault:"50"`
