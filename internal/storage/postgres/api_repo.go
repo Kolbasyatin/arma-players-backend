@@ -249,6 +249,47 @@ func (r *APIRepo) PlayerSessions(ctx context.Context, id int64, limit int) ([]ht
 	return out, rows.Err()
 }
 
+// PlayerQueue — очереди, где игрок стоит по последнему успешному опросу (absent_polls = 0:
+// SUSPECTED_GONE в очереди уже нет). Место — тем же правилом, что в событии входа
+// (presence.queueOps.openedPayload): впереди открытые сессии той же очереди, начатые раньше;
+// начатые в тот же опрос (включая его самого) — неразличимы и дают ширину диапазона.
+// Все три выборки идут по частичному индексу player_queue_session_open_idx: в нём только
+// открытые сессии, десятки строк на сервер.
+func (r *APIRepo) PlayerQueue(ctx context.Context, id int64) ([]httpapi.QueueEntry, error) {
+	rows, err := r.pool.Query(ctx, `
+		WITH mine AS (
+			SELECT q.server_id, q.first_seen_at, q.last_seen_at
+			FROM player_queue_session q
+			WHERE q.player_id = $1 AND q.ended_at IS NULL AND q.absent_polls = 0
+		)
+		SELECT c.id, c.display_name, m.first_seen_at, m.last_seen_at,
+		       count(*) FILTER (WHERE o.first_seen_at < m.first_seen_at) AS ahead,
+		       count(*) FILTER (WHERE o.first_seen_at = m.first_seen_at) AS together,
+		       count(*) AS size
+		FROM mine m
+		JOIN player_queue_session o ON o.server_id = m.server_id AND o.ended_at IS NULL AND o.absent_polls = 0
+		JOIN server sv ON sv.id = m.server_id
+		JOIN server c ON c.id = COALESCE(sv.merged_into_server_id, sv.id)
+		GROUP BY c.id, c.display_name, m.first_seen_at, m.last_seen_at
+		ORDER BY m.last_seen_at DESC`, id)
+	if err != nil {
+		return nil, fmt.Errorf("player queue: %w", err)
+	}
+	defer rows.Close()
+	var out []httpapi.QueueEntry
+	for rows.Next() {
+		var q httpapi.QueueEntry
+		var ahead, together int
+		if err := rows.Scan(&q.ServerID, &q.ServerName, &q.Since, &q.ObservedAt, &ahead, &together, &q.QueueSize); err != nil {
+			return nil, err
+		}
+		q.PositionMin, q.PositionMax = ahead+1, ahead+together
+		q.WaitedSeconds = int64(q.ObservedAt.Sub(q.Since) / time.Second)
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
 func (r *APIRepo) Servers(ctx context.Context, trackedOnly bool, nameFilter string) ([]httpapi.ServerSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT s.id, s.display_name, COALESCE(s.current_host_address, ''), s.active, s.tracking_enabled, COALESCE(s.tracking_source, ''),

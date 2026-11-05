@@ -18,6 +18,7 @@ type fakeStore struct {
 	lastQ   httpapi.EventsQuery
 	players []httpapi.PlayerSummary
 	fuzzy   bool
+	queue   map[int64][]httpapi.QueueEntry
 }
 
 func (f *fakeStore) Events(_ context.Context, q httpapi.EventsQuery) ([]httpapi.Event, error) {
@@ -56,6 +57,9 @@ func (f *fakeStore) Player(_ context.Context, id int64) (httpapi.PlayerSummary, 
 }
 func (f *fakeStore) PlayerSessions(context.Context, int64, int) ([]httpapi.Session, error) {
 	return nil, nil
+}
+func (f *fakeStore) PlayerQueue(_ context.Context, id int64) ([]httpapi.QueueEntry, error) {
+	return f.queue[id], nil
 }
 func (f *fakeStore) Servers(context.Context, bool, string) ([]httpapi.ServerSummary, error) {
 	return nil, nil
@@ -176,6 +180,32 @@ func TestAPI_players(t *testing.T) {
 	code, body = get(t, srv.URL+"/players/4812/sessions", "secret")
 	if code != 200 || !strings.Contains(mustJSON(body), `"sessions":[]`) {
 		t.Errorf("sessions must be [] not null: %d %s", code, mustJSON(body))
+	}
+}
+
+func TestAPI_playerQueue(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeStore{queue: map[int64][]httpapi.QueueEntry{
+		4812: {{ServerID: 1, ServerName: "OG9", Since: now, ObservedAt: now, PositionMin: 3, PositionMax: 4, QueueSize: 9}},
+	}}
+	srv := newAPI(t, store)
+
+	code, body := get(t, srv.URL+"/players/4812/queue", "secret")
+	entries, _ := body["queue"].([]any)
+	if code != 200 || len(entries) != 1 {
+		t.Fatalf("queue: %d %v", code, body)
+	}
+	entry := entries[0].(map[string]any)
+	if entry["position_min"] != 3.0 || entry["position_max"] != 4.0 || entry["queue_size"] != 9.0 {
+		t.Errorf("queue entry: %v", entry)
+	}
+	// Не в очереди — пустой список, а не null: бот отличает «не стоит» от сбоя по коду ответа.
+	code, body = get(t, srv.URL+"/players/777/queue", "secret")
+	if code != 200 || !strings.Contains(mustJSON(body), `"queue":[]`) {
+		t.Errorf("not queued must be []: %d %s", code, mustJSON(body))
+	}
+	if code, _ := get(t, srv.URL+"/players/abc/queue", "secret"); code != http.StatusBadRequest {
+		t.Errorf("bad id: want 400, got %d", code)
 	}
 }
 

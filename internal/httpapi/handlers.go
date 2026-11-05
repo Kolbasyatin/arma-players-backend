@@ -105,6 +105,22 @@ func registerAPI(mux *http.ServeMux, store Store, dossier DossierProvider, token
 		writeJSON(w, http.StatusOK, map[string]any{"sessions": nonNil(sessions)})
 	})))
 
+	// Где игрок стоит в очереди сейчас и каким по счёту. Считается при чтении из открытых
+	// сессий очереди — ни хранения, ни фоновой работы ради этого нет.
+	mux.Handle("GET /players/{id}/queue", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("id: integer expected"))
+			return
+		}
+		queue, err := store.PlayerQueue(r.Context(), id)
+		if err != nil {
+			serverError(w, "player queue", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"queue": nonNil(queue)})
+	})))
+
 	// Досье Steam. Обращение к нему ЗАОДНО ставит игрока в watchlist: интерес человека —
 	// лучший признак «этот игрок нам важен», и отдельная команда «начни собирать» не нужна.
 	// Маршрут регистрируется, только если сбор данных Steam включён (STEAM_GATEWAY_URL).

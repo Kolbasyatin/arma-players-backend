@@ -165,3 +165,68 @@ func TestAPIRepo_endToEnd(t *testing.T) {
 		t.Errorf("no tracked servers expected, got %d", len(tracked))
 	}
 }
+
+// Место в очереди при чтении считается тем же правилом, что в событии входа:
+// впереди — кто стоит и пришёл раньше, пришедшие одновременно дают диапазон,
+// а ушедший из очереди (SUSPECTED_GONE) уже никого не задерживает.
+func TestAPIRepo_playerQueue(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+
+	if _, err := postgres.NewCatalogRepo(pool).SaveLobbyPage(ctx, t0, loadRooms(t), []byte(`{}`), t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	svc := presence.NewService(postgres.NewPresenceStore(pool), presence.Config{AbsentConfirmations: 2})
+	player := func(id, name string) bohemia.Player {
+		return bohemia.Player{UserID: id, Username: name, GameClientType: "PLATFORM_PC", PlatformUserID: "7656" + name}
+	}
+	a := player("00000000-0000-0000-0000-00000000000a", "A")
+	b := player("00000000-0000-0000-0000-00000000000b", "B")
+	c := player("00000000-0000-0000-0000-00000000000c", "C")
+	d := player("00000000-0000-0000-0000-00000000000d", "D")
+
+	// +0: A; +1: B и C одновременно; +2: A ушёл (SUSPECTED_GONE), пришёл D.
+	for i, queue := range [][]bohemia.Player{{a}, {a, b, c}, {b, c, d}} {
+		obs := presence.Observation{ServerID: 1, ObservedAt: t0.Add(time.Duration(i) * time.Minute), Queue: queue}
+		if _, err := svc.Apply(ctx, obs); err != nil {
+			t.Fatalf("apply #%d: %v", i, err)
+		}
+	}
+	api := postgres.NewAPIRepo(pool)
+	idOf := func(name string) int64 {
+		players, _, err := api.SearchPlayers(ctx, name, 10)
+		if err != nil || len(players) == 0 {
+			t.Fatalf("player %s: %v %v", name, players, err)
+		}
+		for _, p := range players {
+			if p.CurrentNickname == name {
+				return p.PlayerID
+			}
+		}
+		t.Fatalf("player %s not found exactly", name)
+		return 0
+	}
+
+	for name, want := range map[string]struct{ min, max int }{"B": {1, 2}, "C": {1, 2}, "D": {3, 3}} {
+		queue, err := api.PlayerQueue(ctx, idOf(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(queue) != 1 {
+			t.Fatalf("%s: want one queue, got %+v", name, queue)
+		}
+		q := queue[0]
+		if q.PositionMin != want.min || q.PositionMax != want.max || q.QueueSize != 3 || q.ServerName == "" {
+			t.Errorf("%s: want %d–%d of 3, got %+v", name, want.min, want.max, q)
+		}
+	}
+	// D стоит с +2 и последний раз замечен в +2: ждёт 0 секунд, B — с +1, ждёт минуту.
+	if q, _ := api.PlayerQueue(ctx, idOf("B")); q[0].WaitedSeconds != 60 {
+		t.Errorf("B waited: %+v", q[0])
+	}
+	// A в последнем опросе в очереди не было — для API он уже не стоит.
+	if q, err := api.PlayerQueue(ctx, idOf("A")); err != nil || len(q) != 0 {
+		t.Errorf("A must not be queued: %+v %v", q, err)
+	}
+}

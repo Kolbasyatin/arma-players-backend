@@ -143,6 +143,9 @@ type sessionOps interface {
 	closedEvent() EventType
 	// onClose дополняет сессию при закрытии (итог очереди) и возвращает payload события.
 	onClose(s *Session, gap bool) map[string]any
+	// openedPayload — payload события открытия. ahead — сколько присутствующих пришли раньше
+	// (их сессии уже были открыты), arrived — сколько появилось в этом же опросе, total — всего сейчас.
+	openedPayload(ahead, arrived, total int) map[string]any
 }
 
 // reconcile — машина состояний ADR 0005 для одного вида сессий.
@@ -150,6 +153,7 @@ func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGa
 	var st reconcileStats
 	now := obs.ObservedAt
 	seen := make(map[int64]bool, len(open))
+	kept := 0 // открытые сессии, чьи игроки есть в этом наблюдении: пришли раньше новичков
 
 	for i := range open {
 		sess := open[i]
@@ -175,6 +179,7 @@ func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGa
 			if err := ops.update(ctx, tx, sess); err != nil {
 				return st, err
 			}
+			kept++
 			continue
 		}
 
@@ -208,7 +213,10 @@ func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGa
 		st.suspected++
 	}
 
-	// Новые: присутствуют, но открытой сессии нет.
+	// Новые: присутствуют, но открытой сессии нет. Каждый присутствующий либо продлил открытую
+	// сессию (kept), либо новый — поэтому новых ровно len(present) - kept. Порядок между ними
+	// неизвестен: все появились за один интервал опроса.
+	arrived := len(present) - kept
 	for playerID := range present {
 		if seen[playerID] {
 			continue
@@ -224,6 +232,7 @@ func (s *Service) reconcile(ctx context.Context, tx Tx, obs Observation, afterGa
 		st.opened++
 		if err := tx.AppendEvent(ctx, Event{
 			Type: ops.openedEvent(), OccurredAt: now, PlayerID: playerID, ServerID: obs.ServerID, SessionID: &id,
+			Payload:       ops.openedPayload(kept, arrived, len(present)),
 			StartupReplay: obs.StartupReplay, AfterDataGap: afterGap,
 		}); err != nil {
 			return st, err
@@ -240,9 +249,10 @@ func (presenceOps) insert(ctx context.Context, tx Tx, s Session) (int64, error) 
 func (presenceOps) update(ctx context.Context, tx Tx, s Session) error {
 	return tx.UpdatePresenceSession(ctx, s)
 }
-func (presenceOps) openedEvent() EventType                { return EventPlayerJoinedServer }
-func (presenceOps) closedEvent() EventType                { return EventPlayerLeftServer }
-func (presenceOps) onClose(*Session, bool) map[string]any { return nil }
+func (presenceOps) openedEvent() EventType                     { return EventPlayerJoinedServer }
+func (presenceOps) closedEvent() EventType                     { return EventPlayerLeftServer }
+func (presenceOps) onClose(*Session, bool) map[string]any      { return nil }
+func (presenceOps) openedPayload(int, int, int) map[string]any { return nil }
 
 type queueOps struct{ connected map[int64]struct{} }
 
@@ -253,6 +263,16 @@ func (queueOps) update(ctx context.Context, tx Tx, s Session) error {
 	return tx.UpdateQueueSession(ctx, s)
 }
 func (queueOps) openedEvent() EventType { return EventPlayerEnteredQueue }
+
+// openedPayload — оценка места в очереди при входе: впереди все, кого мы видели в очереди
+// раньше и кто ещё в ней стоит. Порядок `queuePlayers[]` для этого не годится (он не связан
+// с очерёдностью, docs/research), годится время первого появления. Пришедшие за один опрос
+// неразличимы, поэтому место — диапазон; position_min == position_max означает «точно».
+// Допущение — очередь FIFO; проверено на данных 05.11.2026: в 83% входов никто из пришедших
+// раньше не остался стоять, в 14% — один.
+func (queueOps) openedPayload(ahead, arrived, total int) map[string]any {
+	return map[string]any{"position_min": ahead + 1, "position_max": ahead + arrived, "queue_size": total}
+}
 func (queueOps) closedEvent() EventType { return EventPlayerLeftQueue }
 
 // onClose: очередь закрылась — игрок либо вошёл на сервер (сейчас в connected), либо ушёл.

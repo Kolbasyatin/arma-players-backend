@@ -77,6 +77,23 @@ type Session struct {
 	DurationSeconds int64      `json:"duration_seconds"`
 }
 
+// QueueEntry — игрок стоит в очереди сервера прямо сейчас (по последнему успешному опросу).
+//
+// Место — оценка, а не данные Bohemia: впереди все, кого мы увидели в этой очереди раньше
+// и кто в ней ещё стоит. Пришедшие за один опрос неразличимы, поэтому место — диапазон,
+// и position_min == position_max означает «точно». Диапазон сужается сам: те, кто пришёл
+// одновременно с игроком и уже ушёл, из него выпадают.
+type QueueEntry struct {
+	ServerID      int64     `json:"server_id"`
+	ServerName    string    `json:"server_name"`
+	Since         time.Time `json:"since"`       // когда впервые замечен в этой очереди
+	ObservedAt    time.Time `json:"observed_at"` // последний опрос, где он в ней был: свежесть ответа
+	PositionMin   int       `json:"position_min"`
+	PositionMax   int       `json:"position_max"`
+	QueueSize     int       `json:"queue_size"` // сколько сейчас в очереди по нашим данным
+	WaitedSeconds int64     `json:"waited_seconds"`
+}
+
 // ServerSummary — сервер каталога с текущим состоянием.
 type ServerSummary struct {
 	ID             int64      `json:"id"`
@@ -101,5 +118,7 @@ type Store interface {
 	PlayersByIDs(ctx context.Context, ids []int64) ([]PlayerSummary, error)
 	Player(ctx context.Context, id int64) (PlayerSummary, bool, error)
 	PlayerSessions(ctx context.Context, id int64, limit int) ([]Session, error)
+	// PlayerQueue — очереди, в которых игрок стоит сейчас. Пусто — не стоит (или не известен).
+	PlayerQueue(ctx context.Context, id int64) ([]QueueEntry, error)
 	Servers(ctx context.Context, trackedOnly bool, nameFilter string) ([]ServerSummary, error)
 }

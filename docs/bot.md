@@ -132,7 +132,7 @@ Salat Majompski — последние визиты:
 |---|---|
 | `PLAYER_JOINED_SERVER` | 🟢 **Salat Majompski** зашёл на **[RU] #1 \| ARMA-RUSSIAN.RU** в 21:03 |
 | `PLAYER_LEFT_SERVER` | ⚪ **Salat Majompski** вышел с **[RU] #1 \| ARMA-RUSSIAN.RU** в 22:15, провёл 1 ч 12 мин |
-| `PLAYER_ENTERED_QUEUE` | 🕒 **Salat Majompski** встал в очередь на **[OG9] Old Guys 9** |
+| `PLAYER_ENTERED_QUEUE` | 🕒 **Salat Majompski** встал в очередь на **[OG9] Old Guys 9** — 12-й из 19 (если `position_min == position_max`) или — примерно 12–14-й из 19; под сообщением кнопка «Проверить очередь» → `GET /players/{id}/queue` |
 | `PLAYER_LEFT_QUEUE`, `payload.result = JOINED_SERVER` | 🟢 **Salat Majompski** вошёл на **[OG9] Old Guys 9** после 10 мин в очереди |
 | `PLAYER_LEFT_QUEUE`, `payload.result = LEFT_QUEUE` | ⚪ **Salat Majompski** ушёл из очереди **[OG9] Old Guys 9**, прождав 8 мин |
 | `PLAYER_NICKNAME_CHANGED` | ✏️ **Salat Majompski** теперь **Salat** — оба имени берутся из `payload` (`old`/`new`), не из `nickname`: так сообщение корректно и со старой версией сервиса |

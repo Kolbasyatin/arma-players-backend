@@ -275,6 +275,46 @@ func TestApply_queueThenJoin(t *testing.T) {
 	}
 }
 
+// Место при входе в очередь: впереди все, кто уже стоял; пришедшие за один опрос дают диапазон.
+func TestApply_queueEntryPosition(t *testing.T) {
+	m := newMem()
+	svc := presence.NewService(m, presence.Config{AbsentConfirmations: 2})
+	a, b, c, d := pl("a", "A"), pl("b", "B"), pl("c", "C"), pl("d", "D")
+
+	poll(t, svc, m, 0, nil, []bohemia.Player{a})       // A один: точно первый
+	poll(t, svc, m, 1, nil, []bohemia.Player{a, b, c}) // B и C за одну минуту: 2–3
+	// A пропал (ещё SUSPECTED_GONE, но в очереди его нет) — впереди D только B и C.
+	poll(t, svc, m, 2, nil, []bohemia.Player{b, c, d})
+
+	want := map[string]struct{ min, max, size int }{
+		"a": {1, 1, 1},
+		"b": {2, 3, 3},
+		"c": {2, 3, 3},
+		"d": {3, 3, 3},
+	}
+	entered := m.eventsOf(presence.EventPlayerEnteredQueue)
+	if len(entered) != len(want) {
+		t.Fatalf("want %d entries, got %d", len(want), len(entered))
+	}
+	for userID, w := range want {
+		id := m.players[userID].id
+		var got presence.Event
+		for _, e := range entered {
+			if e.PlayerID == id {
+				got = e
+			}
+		}
+		if got.Payload["position_min"] != w.min || got.Payload["position_max"] != w.max || got.Payload["queue_size"] != w.size {
+			t.Errorf("%s: want %+v, got payload %v", userID, w, got.Payload)
+		}
+	}
+	// У входа на сервер позиции нет: payload пустой, как и раньше.
+	poll(t, svc, m, 3, []bohemia.Player{a}, []bohemia.Player{b, c, d})
+	if joined := m.eventsOf(presence.EventPlayerJoinedServer); len(joined) != 1 || joined[0].Payload != nil {
+		t.Errorf("join payload must stay empty: %+v", joined)
+	}
+}
+
 func TestApply_duplicatePlayerInList(t *testing.T) {
 	m := newMem()
 	svc := presence.NewService(m, presence.Config{})
